@@ -4,7 +4,7 @@ Billing and ledger platform in Python: a double-entry ledger with a provable bal
 
 A tenant posts financial events through an API. Every event becomes a balanced journal entry or is rejected with the reason. Subscriptions invoice on a schedule and collect through Stripe; the ledger, not Stripe, is the source of truth. Bank statements are imported and reconciled against the journal, and anything that does not match becomes an exception an operator resolves from the console. Every write is idempotent, every account mutation is locked in a fixed order, and the journal cannot be edited after the fact: corrections are reversing entries. Everything runs in Docker Compose with no cloud account and no card on file.
 
-**Status.** Phase 0 (skeleton, compose, CI) is done. This README describes the target system; the phase list at the end records what has landed. Nothing described here should be read as finished until its phase is ticked.
+**Status.** Phases 0 (skeleton, compose, CI) and 1 (domain and journal) are done. This README describes the target system; the phase list at the end records what has landed. Nothing described here should be read as finished until its phase is ticked.
 
 ## Ten-minute tour
 
@@ -65,23 +65,33 @@ Prerequisites: Docker with Compose v2, uv 0.12+, Node 26, Stripe CLI, a Stripe a
 docker compose up -d --wait   # Postgres, Redis, stripe-mock, RustFS with the reports bucket
 make dev                      # migrate, Django on 8001, Celery worker and Beat
 make test                     # pytest against the compose Postgres
+uv run python manage.py seed_demo       # two tenants, 90 days of entries
+uv run python manage.py replay_balances # rebuild the balance projection
 make lint                     # ruff, mypy, import-linter
 cd console && npm ci && npm run dev   # Vite on 5173, proxies /api and /health to 8001
 ```
 
 ## The ledger
 
-Double entry. An `Account` has a type (asset, liability, equity, revenue, expense) and a currency. A `JournalEntry` has at least two `Line`s; within one entry the signed amounts sum to zero per currency, and no line is zero. That is the invariant, and it is enforced three times:
+Double entry means every event is recorded twice: once where value came from and once where it went. An invoice for 149.00 debits accounts receivable (an asset grows) and credits revenue (income is recognized). The payment that settles it debits cash and credits receivable. Each side is a `Line` with a signed amount; debits are positive, credits negative, and the lines of one `JournalEntry` always sum to zero. Because every entry is zero-sum, the sum of all balances across the chart is zero at every instant, and any balance can be recomputed from the journal alone.
+
+An `Account` has a type (asset, liability, equity, revenue, expense), a code, a currency and a tenant. A `JournalEntry` has at least two `Line`s; within one entry the amounts sum to zero per currency, no line is zero, and every line is in its account's currency. That is the invariant, and it is enforced three times:
 
 | Where | How | Why it is there |
 |---|---|---|
-| Domain | `post(entry)` raises `UnbalancedEntry`, `SingleLineEntry`, `ZeroLine` or `CurrencyMismatch` | The rule lives in one pure function with Hypothesis property tests generating thousands of balanced and unbalanced entries |
-| Database | A deferred constraint trigger over `journal_lines` rejects the transaction at commit if any entry is unbalanced | Protects the journal from code paths that bypass the domain, including a raw SQL insert |
-| API | 422 problem details naming the currency and the difference | The caller learns exactly what to fix |
+| Domain | `post(entry, accounts)` in `tally/domain/journal.py` checks line count, zero lines, account ownership and currency, then balance, in that order, and raises `SingleLineEntry`, `ZeroLine`, `UnknownAccount`, `CurrencyMismatch` or `UnbalancedEntry` carrying the currency and the difference | The rule is one pure function. Hypothesis generates balanced entries and balanced entries nudged by a known delta; the property is that every balanced entry posts and every nudged one is rejected with exactly that delta. CI runs 1,000 examples |
+| Database | A `CHECK (amount <> 0)` on `journal_lines`, and a deferred constraint trigger on both `journal_entries` and `journal_lines` that, at commit, rejects any entry with fewer than two lines or a nonzero sum per currency | Protects the journal from code that bypasses the domain. The tests write raw SQL and prove an unbalanced insert fails at `COMMIT`, after the rows were visible inside the transaction |
+| API | 422 problem details naming the currency and the difference (Phase 2) | The caller learns exactly what to fix |
 
-**Append-only.** `journal_entries` and `journal_lines` carry a `BEFORE UPDATE OR DELETE` trigger that raises. A mistake is corrected by a reversing entry linked to the original. Balances are not stored on accounts; `account_balances` is a projection updated incrementally on every post and rebuilt from the journal by `manage.py replay_balances`. A test posts random entries and asserts the incremental projection equals a fresh fold over the journal. This is event sourcing in its plain form: the journal is the event log and the balance is derived. Tenants, plans and subscriptions are ordinary rows; the README says what is and is not event sourced so the word is not oversold.
+**Append-only.** `journal_entries` and `journal_lines` carry `BEFORE UPDATE OR DELETE` triggers that raise, so neither the ORM nor a `psql` session can edit history. A mistake is corrected by a reversing entry: `ReverseEntry` negates every line of the original, links the new entry to it one-to-one, and refuses to reverse the same entry twice. An auditor reads the original, the reversal and the correction, not a row that quietly changed.
 
-**Money.** `Decimal` with a currency, stored as `numeric(18,6)`, displayed with the currency's exponent, rounded `ROUND_HALF_EVEN` at the one place rounding is allowed. Floats never touch money. Mixed-currency arithmetic raises.
+**Projection.** Balances are not stored on accounts. `account_balances(account_id, balance, as_of)` is a projection: every post upserts the touched accounts inside the same transaction, and `manage.py replay_balances` truncates the table and rebuilds it with one `GROUP BY` over the journal. A test posts random entries, reverses some, corrupts the projection, and asserts the rebuild equals both the incremental table and a fresh fold in Python.
+
+**What "event sourced" means here.** The journal is the event log and the balance is derived state that can be thrown away and recomputed. That is event sourcing in its plain form, and it applies to the ledger only. Tenants, accounts, plans and subscriptions are ordinary rows that are updated in place. The README says so to avoid overselling the word.
+
+**Money.** `Money(amount: Decimal, currency)` quantizes to six decimal places with `ROUND_HALF_EVEN` on construction, the one place rounding happens; display rounds to the currency's exponent (2 for USD, EUR, GBP; 0 for JPY). Amounts must fit `numeric(18,6)`, so anything at or beyond 10^12 is refused rather than silently losing precision. Floats are refused with `TypeError`. Mixed-currency arithmetic raises `CurrencyMismatch`.
+
+**Layers.** `tally/domain` imports nothing from Django; `import-linter` fails CI if it does. `tally/application` holds `PostEntry` and `ReverseEntry` over a `JournalRepository` Protocol and is tested against an in-memory fake. `tally/adapters` implements the port with the Django ORM, owns the migrations and triggers, and ships `seed_demo`: two tenants, a 12-account chart each, and 400 deterministic entries over 90 days.
 
 ## Posting API
 
@@ -158,7 +168,7 @@ Planned, enforced in CI from Phase 0:
 Each phase is a branch merged by pull request and tracked as a GitHub issue.
 
 - [x] 0 Skeleton, compose, CI
-- [ ] 1 Domain and journal: the balancing invariant
+- [x] 1 Domain and journal: the balancing invariant
 - [ ] 2 Posting API: idempotency, locking, rate limiting
 - [ ] 3 Subscriptions, Stripe, webhooks in and out
 - [ ] 4 Reconciliation and the nightly partner report
