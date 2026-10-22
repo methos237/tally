@@ -1,0 +1,72 @@
+[project]
+name = "tally"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "celery>=5.6.3",
+    "django>=6.0.9",
+    "django-celery-beat>=2.9.0",
+    "django-redis>=7.0.0",
+    "djangorestframework>=3.18.3",
+    "drf-spectacular>=0.30.0",
+    "psycopg[binary]>=3.3.6",
+    "structlog>=26.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "django-stubs>=6.1.2",
+    "djangorestframework-stubs>=3.18.1",
+    "factory-boy>=3.3.3",
+    "hypothesis>=6.170.5",
+    "import-linter>=2.15",
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "pytest-django>=4.14.0",
+    "pytest-recording>=0.14.0",
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["mypy_django_plugin.main"]
+
+[tool.django-stubs]
+django_settings_module = "tally.settings.test"
+
+[[tool.mypy.overrides]]
+module = "tally.domain.*"
+strict = true
+
+[tool.importlinter]
+root_package = "tally"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "domain-is-pure"
+type = "forbidden"
+source_modules = ["tally.domain"]
+forbidden_modules = ["django", "rest_framework", "celery", "stripe", "tally.application", "tally.adapters", "tally.api"]
+
+[[tool.importlinter.contracts]]
+name = "application-does-not-import-adapters"
+type = "forbidden"
+source_modules = ["tally.application"]
+forbidden_modules = ["tally.adapters", "tally.api", "django", "rest_framework"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "tally.settings.test"
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["live: hits Stripe test mode; skipped without STRIPE_TEST_SECRET_KEY"]
+
+[[tool.mypy.overrides]]
+module = ["django_celery_beat.*", "django_redis.*"]
+ignore_missing_imports = true

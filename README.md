@@ -4,21 +4,21 @@ Billing and ledger platform in Python: a double-entry ledger with a provable bal
 
 A tenant posts financial events through an API. Every event becomes a balanced journal entry or is rejected with the reason. Subscriptions invoice on a schedule and collect through Stripe; the ledger, not Stripe, is the source of truth. Bank statements are imported and reconciled against the journal, and anything that does not match becomes an exception an operator resolves from the console. Every write is idempotent, every account mutation is locked in a fixed order, and the journal cannot be edited after the fact: corrections are reversing entries. Everything runs in Docker Compose with no cloud account and no card on file.
 
-**Status.** Design complete, build not started. This README describes the target system; the phase list at the end records what has landed. Nothing described here should be read as finished until its phase is ticked.
+**Status.** Phase 0 (skeleton, compose, CI) is done. This README describes the target system; the phase list at the end records what has landed. Nothing described here should be read as finished until its phase is ticked.
 
 ## Ten-minute tour
 
 The intended path once Phase 6 lands:
 
 ```bash
-docker compose up -d --wait                  # Postgres 5435, Redis 6380, MinIO 9000, stripe-mock, Jaeger 16687
+docker compose up -d --wait                  # Postgres 5435, Redis 6380, S3 (RustFS) 9000, stripe-mock 12111, Jaeger 16687
 make dev                                     # migrations, seed, Django 8001, Celery worker + Beat
 scripts/post-entry.sh                        # one balanced entry with an Idempotency-Key, then the same key again
 scripts/post-entry.sh --unbalanced           # 422 problem details naming the currency and the difference
 scripts/stripe-listen.sh                     # forward Stripe test-mode webhooks; triggers payment_intent.succeeded
 curl -s localhost:8001/api/accounts/1200/balance | jq   # cash moved, accounts receivable cleared
 docker compose --profile batch up -d         # Airflow 8081
-airflow dags trigger partner_daily_report    # CSV per tenant lands in MinIO bucket reports/
+airflow dags trigger partner_daily_report    # CSV per tenant lands in S3 bucket reports/
 open http://localhost:5173                   # console: journal, balances, subscriptions, dead letters, reconciliation
 ```
 
@@ -41,7 +41,7 @@ Tenant systems ──► POST /entries, /subscriptions, /statements   (X-Api-Key
    Celery workers ──┤  bill_due_subscriptions (Beat), deliver_webhooks (outbox), expire_idempotency,
                     │  process_stripe_event
    Stripe test mode ──► POST /webhooks/stripe (signature verified, deduplicated)
-   Airflow ─────────── partner_daily_report ──► MinIO bucket reports/ ──► report.ready webhook
+   Airflow ─────────── partner_daily_report ──► S3 bucket reports/ (RustFS) ──► report.ready webhook
 
 Console (Vue 3, Vite, Tailwind, Pinia, Storybook, Cypress) ──► session-authenticated JSON endpoints
 ```
@@ -57,9 +57,17 @@ Console (Vue 3, Vite, Tailwind, Pinia, Storybook, Cypress) ──► session-aut
 
 ## Stack
 
-Python 3.13 · Django · Django REST Framework · Celery + Redis · PostgreSQL 17 · Stripe (test mode) · Airflow · MinIO (S3 API) · Hypothesis · pytest · import-linter · Vue 3 · Vite · TypeScript · Tailwind CSS · Pinia · Storybook · Cypress · OpenTelemetry · GitHub Actions
+Python 3.13 · Django 6.0 · Django REST Framework 3.18 · Celery 5.6 + Redis 7 · PostgreSQL 17 · Stripe (test mode) · Airflow · RustFS (S3 API) · Hypothesis · pytest · import-linter · Vue 3.5 · Vite 8 · TypeScript 6 · Tailwind CSS 4 · Pinia 4 · Storybook · Cypress · OpenTelemetry · GitHub Actions
 
-Prerequisites: Docker with Compose v2, uv, Node 26, a Stripe account in test mode (free, no card). Exact versions are pinned when Phase 0 lands.
+Prerequisites: Docker with Compose v2, uv 0.12+, Node 26, Stripe CLI, a Stripe account in test mode (free, no card). Copy `.env.example` to `.env`; the defaults work against compose without a Stripe key.
+
+```bash
+docker compose up -d --wait   # Postgres, Redis, stripe-mock, RustFS with the reports bucket
+make dev                      # migrate, Django on 8001, Celery worker and Beat
+make test                     # pytest against the compose Postgres
+make lint                     # ruff, mypy, import-linter
+cd console && npm ci && npm run dev   # Vite on 5173, proxies /api and /health to 8001
+```
 
 ## The ledger
 
@@ -111,7 +119,7 @@ CI never calls Stripe. The SDK is wrapped by one gateway module; tests run again
 
 A `Statement` is imported from CSV (bank or processor layout). Matching rules in the domain run in order: exact reference and amount, then amount within a three-day window, then nothing. Every line ends matched or excepted exactly once (a Hypothesis property). Exceptions carry a reason and are resolved from the console by posting an adjusting entry or recording an explanation. A statement is reconciled when no line is left unexplained.
 
-`partner_daily_report` is an Airflow DAG with a settlement sensor, a report task and an outbox task. The report itself is `manage.py partner_report --date --tenant`, which writes a CSV per tenant to a MinIO bucket over the S3 API, so the job is testable without Airflow and Airflow contributes what it is good at: scheduling, retries, SLAs, backfill.
+`partner_daily_report` is an Airflow DAG with a settlement sensor, a report task and an outbox task. The report itself is `manage.py partner_report --date --tenant`, which writes a CSV per tenant to an S3 bucket (RustFS in compose), so the job is testable without Airflow and Airflow contributes what it is good at: scheduling, retries, SLAs, backfill.
 
 ## Console
 
@@ -128,7 +136,8 @@ Vue 3 with `<script setup>` and TypeScript, Vite, Pinia, Tailwind CSS, a typed c
 - **Outbox for outbound webhooks.** A webhook sent from inside a request either fires for a transaction that rolls back or is lost when the process dies after commit. The outbox closes both.
 - **Airflow for one DAG.** Two or three tasks is enough to use it truthfully, and the job stays a management command so nobody needs Airflow to test it.
 - **Vue, not React.** React is already proven elsewhere; the console is here to prove Vue 3, Pinia, Storybook and Cypress with the same care.
-- **Zero cost.** Compose for everything, Stripe test mode, MinIO instead of S3. No cloud account is created for this project.
+- **Zero cost.** Compose for everything, Stripe test mode, RustFS instead of S3. No cloud account is created for this project.
+- **RustFS, not MinIO.** MinIO withdrew its free container images in September 2026. RustFS speaks the same S3 API on the same ports, so `boto3` and the report job do not know the difference.
 
 ## Tests
 
@@ -148,7 +157,7 @@ Planned, enforced in CI from Phase 0:
 
 Each phase is a branch merged by pull request and tracked as a GitHub issue.
 
-- [ ] 0 Skeleton, compose, CI
+- [x] 0 Skeleton, compose, CI
 - [ ] 1 Domain and journal: the balancing invariant
 - [ ] 2 Posting API: idempotency, locking, rate limiting
 - [ ] 3 Subscriptions, Stripe, webhooks in and out
