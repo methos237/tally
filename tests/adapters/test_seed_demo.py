@@ -4,7 +4,7 @@ import pytest
 from django.core.management import call_command
 
 from tally.adapters.models import Account, JournalEntry, Tenant
-from tests.adapters.conftest import fold_from_journal, projection
+from tests.conftest import fold_from_journal, projection
 
 
 @pytest.mark.django_db(transaction=True)

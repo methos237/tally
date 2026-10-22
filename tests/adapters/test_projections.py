@@ -13,7 +13,7 @@ from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import PostEntry, ReverseEntry
 from tally.domain.journal import JournalEntry, Line
 from tally.domain.money import Currency, Money
-from tests.adapters.conftest import fold_from_journal, projection
+from tests.conftest import Ledger, fold_from_journal, projection
 from tests.domain.strategies import NOW, entry
 
 
@@ -56,7 +56,7 @@ def test_incremental_projection_equals_fold_and_replay(tenant: Tenant) -> None:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_as_of_tracks_the_latest_posted_entry(ledger: tuple[Tenant, Account, Account]) -> None:
+def test_as_of_tracks_the_latest_posted_entry(ledger: Ledger) -> None:
     tenant, a, b = ledger
     repo = DjangoJournalRepository()
     first = PostEntry(repo)(entry((a.id, "1"), (b.id, "-1"), tenant_id=tenant.id))

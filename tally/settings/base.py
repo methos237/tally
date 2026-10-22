@@ -24,9 +24,17 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "tally.api.throttle.RateLimitHeadersMiddleware",
 ]
 
 ROOT_URLCONF = "tally.urls"
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "APP_DIRS": True,
+        "OPTIONS": {"context_processors": ["django.template.context_processors.request"]},
+    }
+]
 WSGI_APPLICATION = "tally.wsgi.application"
 
 DATABASES = {
@@ -46,12 +54,30 @@ CACHES = {"default": {"BACKEND": "django_redis.cache.RedisCache", "LOCATION": RE
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+CELERY_BEAT_SCHEDULE = {
+    "expire-idempotency": {"task": "tally.adapters.tasks.expire_idempotency", "schedule": 3600},
+}
 
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
+    "DEFAULT_AUTHENTICATION_CLASSES": ["tally.api.auth.ApiKeyAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_THROTTLE_CLASSES": ["tally.api.throttle.ApiKeyTokenBucket"],
+    "EXCEPTION_HANDLER": "tally.api.problems.handler",
+    "UNAUTHENTICATED_USER": None,
 }
-SPECTACULAR_SETTINGS = {"TITLE": "Tally API", "VERSION": "0.1.0"}
+RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "100"))
+PASSWORD_HASHERS = ["django.contrib.auth.hashers.Argon2PasswordHasher"]
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Tally API",
+    "DESCRIPTION": "Double-entry ledger and billing. Writes need X-Api-Key and Idempotency-Key.",
+    "VERSION": "0.1.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
+    "SERVE_AUTHENTICATION": [],
+}
 
 TIME_ZONE = "UTC"
 USE_TZ = True

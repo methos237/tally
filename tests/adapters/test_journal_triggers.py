@@ -7,6 +7,7 @@ import pytest
 from django.db import IntegrityError, connection, transaction
 
 from tally.adapters.models import Account, JournalEntry, JournalLine, Tenant
+from tests.conftest import Ledger
 from tests.domain.strategies import NOW
 
 
@@ -29,7 +30,7 @@ def raw_entry(tenant: Tenant, *lines: tuple[Account, str]) -> int:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_balanced_raw_insert_commits(ledger: tuple[Tenant, Account, Account]) -> None:
+def test_balanced_raw_insert_commits(ledger: Ledger) -> None:
     tenant, ar, rev = ledger
     with transaction.atomic():
         entry_id = raw_entry(tenant, (ar, "10"), (rev, "-10"))
@@ -37,7 +38,7 @@ def test_balanced_raw_insert_commits(ledger: tuple[Tenant, Account, Account]) ->
 
 
 @pytest.mark.django_db(transaction=True)
-def test_unbalanced_raw_insert_fails_at_commit(ledger: tuple[Tenant, Account, Account]) -> None:
+def test_unbalanced_raw_insert_fails_at_commit(ledger: Ledger) -> None:
     tenant, ar, rev = ledger
     with pytest.raises(IntegrityError, match="unbalanced: lines in USD sum to 0.010000"):
         with transaction.atomic():
@@ -48,7 +49,7 @@ def test_unbalanced_raw_insert_fails_at_commit(ledger: tuple[Tenant, Account, Ac
 
 
 @pytest.mark.django_db(transaction=True)
-def test_entry_without_two_lines_fails_at_commit(ledger: tuple[Tenant, Account, Account]) -> None:
+def test_entry_without_two_lines_fails_at_commit(ledger: Ledger) -> None:
     tenant, ar, _ = ledger
     with pytest.raises(IntegrityError, match="has 0 line"):
         with transaction.atomic():
@@ -59,7 +60,7 @@ def test_entry_without_two_lines_fails_at_commit(ledger: tuple[Tenant, Account, 
 
 
 @pytest.mark.django_db(transaction=True)
-def test_zero_line_is_rejected_immediately(ledger: tuple[Tenant, Account, Account]) -> None:
+def test_zero_line_is_rejected_immediately(ledger: Ledger) -> None:
     tenant, ar, rev = ledger
     with pytest.raises(IntegrityError, match="ck_line_amount_nonzero"):
         with transaction.atomic():
@@ -67,7 +68,7 @@ def test_zero_line_is_rejected_immediately(ledger: tuple[Tenant, Account, Accoun
 
 
 @pytest.mark.django_db(transaction=True)
-def test_journal_is_append_only(ledger: tuple[Tenant, Account, Account]) -> None:
+def test_journal_is_append_only(ledger: Ledger) -> None:
     tenant, ar, rev = ledger
     with transaction.atomic():
         entry_id = raw_entry(tenant, (ar, "10"), (rev, "-10"))

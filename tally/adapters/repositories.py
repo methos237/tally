@@ -36,6 +36,18 @@ def to_domain_entry(row: models.JournalEntry, lines: Iterable[models.JournalLine
     )
 
 
+def lock_accounts(account_ids: Iterable[int]) -> None:
+    """SELECT ... FOR UPDATE on the touched accounts, ordered by id.
+
+    Two postings that touch the same accounts in opposite order would deadlock if
+    each locked in its own line order; sorting makes every transaction acquire
+    the same locks in the same sequence. Deadlock-free by construction, no retry
+    loop anywhere. The account_balances rows are updated under these locks.
+    """
+    ids = sorted(set(account_ids))
+    list(models.Account.objects.select_for_update().filter(id__in=ids).order_by("id"))
+
+
 class DjangoJournalRepository:
     def accounts_for(self, tenant_id: int, account_ids: Iterable[int]) -> Mapping[int, Account]:
         rows = models.Account.objects.filter(tenant_id=tenant_id, id__in=list(account_ids))
@@ -44,6 +56,7 @@ class DjangoJournalRepository:
     def add(self, entry: JournalEntry) -> JournalEntry:
         try:
             with transaction.atomic():
+                lock_accounts(line.account_id for line in entry.lines)
                 row = models.JournalEntry.objects.create(
                     tenant_id=entry.tenant_id,
                     occurred_at=entry.occurred_at,

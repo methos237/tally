@@ -4,6 +4,9 @@ journal_entries and journal_lines are append-only; see migration 0002 for
 the triggers that enforce it and the deferred balancing check.
 """
 
+from secrets import token_urlsafe
+
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
 
 from tally.domain.journal import AccountType
@@ -15,6 +18,10 @@ CURRENCY_CHOICES = [(c.value, c.value) for c in Currency]
 class Tenant(models.Model):
     name = models.CharField(max_length=200, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    rate_limit_per_minute = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Overrides RATE_LIMIT_PER_MINUTE for this tenant's keys"
+    )
+    is_authenticated = True  # a Tenant is the API principal (request.user); see tally.api.auth
 
     class Meta:
         db_table = "tenants"
@@ -90,3 +97,68 @@ class AccountBalance(models.Model):
 
     class Meta:
         db_table = "account_balances"
+
+
+class ApiKey(models.Model):
+    """A tenant credential. The secret is hashed with Argon2; only the prefix is stored
+    in the clear so a presented key can be looked up before the hash is checked."""
+
+    PREFIX = "tk_"
+    PREFIX_LEN = 8
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="api_keys")
+    name = models.CharField(max_length=100)
+    prefix = models.CharField(max_length=PREFIX_LEN, unique=True)
+    key_hash = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "api_keys"
+
+    @classmethod
+    def issue(cls, tenant: Tenant, name: str) -> str:
+        """Create a key and return the plaintext, which is shown exactly once."""
+        secret = token_urlsafe(32)
+        plaintext = f"{cls.PREFIX}{secret}"
+        cls.objects.create(
+            tenant=tenant,
+            name=name,
+            prefix=secret[: cls.PREFIX_LEN],
+            key_hash=make_password(plaintext, hasher="argon2"),
+        )
+        return plaintext
+
+    @classmethod
+    def authenticate(cls, plaintext: str) -> "ApiKey | None":
+        """The live key matching `plaintext`, or None."""
+        if not plaintext.startswith(cls.PREFIX):
+            return None
+        prefix = plaintext.removeprefix(cls.PREFIX)[: cls.PREFIX_LEN]
+        row = (
+            cls.objects.filter(prefix=prefix, revoked_at__isnull=True)
+            .select_related("tenant")
+            .first()
+        )
+        # ponytail: one Argon2 verify (~26 ms) per request; cache verified keys in Redis if needed
+        return row if row and check_password(plaintext, row.key_hash) else None
+
+
+class IdempotencyRecord(models.Model):
+    """One row per (tenant, Idempotency-Key). Claimed inside the write's transaction;
+    the response is filled in before commit, so a retry sees either nothing or the
+    complete stored response, never a half-written one."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="+")
+    key = models.CharField(max_length=255)
+    request_hash = models.CharField(max_length=64)
+    response_status = models.PositiveSmallIntegerField(null=True)
+    response_body = models.TextField(null=True, help_text="rendered JSON, replayed byte for byte")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "idempotency_records"
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "key"], name="uq_idempotency_tenant_key")
+        ]
+        indexes = [models.Index(fields=["created_at"], name="ix_idempotency_created")]
