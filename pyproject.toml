@@ -68,5 +68,5 @@ addopts = "-q"
 markers = ["live: hits Stripe test mode; skipped without STRIPE_TEST_SECRET_KEY"]
 
 [[tool.mypy.overrides]]
-module = ["django_celery_beat.*", "django_redis.*"]
+module = ["django_celery_beat.*", "django_redis.*", "celery.*"]
 ignore_missing_imports = true

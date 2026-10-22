@@ -8,7 +8,7 @@ It raises a typed error naming exactly what is wrong.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
@@ -48,7 +48,8 @@ class JournalEntry:
     id: int | None = None
     posted_at: datetime | None = None
     idempotency_key: str | None = None
-    reverses_id: int | None = field(default=None)
+    reverses_id: int | None = None
+    reversed_by_id: int | None = None
 
 
 class PostingError(ValueError):
