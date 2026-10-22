@@ -4,8 +4,9 @@ on:
   push:
     branches: [master]
     paths: ["console/**", ".github/workflows/console.yml"]
+  # No paths filter on pull_request: both checks are required by the master
+  # ruleset, and a required check that never runs blocks the merge.
   pull_request:
-    paths: ["console/**", ".github/workflows/console.yml"]
 
 defaults:
   run:

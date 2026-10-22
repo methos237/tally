@@ -4,8 +4,9 @@ on:
   push:
     branches: [master]
     paths: ["tally/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/python.yml"]
+  # No paths filter on pull_request: both checks are required by the master
+  # ruleset, and a required check that never runs blocks the merge.
   pull_request:
-    paths: ["tally/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/python.yml"]
 
 jobs:
   test:
