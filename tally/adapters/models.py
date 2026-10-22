@@ -65,3 +65,6 @@ class JournalLine(models.Model):
     class Meta:
         db_table = "journal_lines"
         indexes = [models.Index(fields=["tenant", "account"], name="ix_lines_tenant_account")]
+        constraints = [
+            models.CheckConstraint(condition=~models.Q(amount=0), name="ck_line_amount_nonzero")
+        ]
