@@ -3,7 +3,7 @@ persistence in the repository."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from tally.application.ports import JournalRepository
@@ -40,10 +40,14 @@ class ReverseEntry:
     journal: JournalRepository
 
     def __call__(
-        self, tenant_id: int, entry_id: int, occurred_at: datetime | None = None
+        self,
+        tenant_id: int,
+        entry_id: int,
+        occurred_at: datetime | None = None,
+        idempotency_key: str | None = None,
     ) -> JournalEntry:
         original = self.journal.get(tenant_id, entry_id)
         if original is None:
             raise EntryNotFound(entry_id)
         reversal = reversal_of(original, occurred_at or datetime.now(UTC))
-        return PostEntry(self.journal)(reversal)
+        return PostEntry(self.journal)(replace(reversal, idempotency_key=idempotency_key))

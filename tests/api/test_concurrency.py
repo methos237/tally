@@ -7,21 +7,19 @@ that any read-modify-write inside a posting transaction (now or in later phases)
 acquires account locks in one global order and cannot deadlock. The second test
 pins that SQL shape."""
 
-import threading
 from decimal import Decimal
 
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
-from rest_framework.test import APIClient
 
-from tally.adapters.models import Account, AccountBalance, JournalEntry, Tenant
+from tally.adapters.models import AccountBalance, JournalEntry, Tenant
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import PostEntry
-from tests.api.conftest import entry_body
+from tests.api.conftest import client_for, in_threads
+from tests.conftest import Ledger
 from tests.domain.strategies import entry
 
-Ledger = tuple[Tenant, Account, Account]
 THREADS, PER_THREAD = 20, 10
 
 
@@ -30,33 +28,18 @@ def test_twenty_threads_on_two_accounts_leave_exact_balances(api_key: str, ledge
     tenant, ar, rev = ledger
     Tenant.objects.filter(id=tenant.id).update(rate_limit_per_minute=10_000)  # not under test here
     failures: list[object] = []
-    barrier = threading.Barrier(THREADS)
 
     def worker(n: int) -> None:
-        client = APIClient()
-        client.credentials(HTTP_X_API_KEY=api_key)
+        client = client_for(api_key)
         lines = [("1200", str(n + 1)), ("4000", f"-{n + 1}")]
         if n % 2:
             lines.reverse()  # opposite lock order from the even threads
-        barrier.wait()
-        try:
-            for i in range(PER_THREAD):
-                response = client.post(
-                    "/api/entries",
-                    entry_body(*lines, source={"type": "load", "id": f"{n}-{i}"}),
-                    format="json",
-                    HTTP_IDEMPOTENCY_KEY=f"load-{n}-{i}",
-                )
-                if response.status_code != 201:
-                    failures.append(response.content)
-        finally:
-            connection.close()
+        for i in range(PER_THREAD):
+            response = client.post_entry(*lines, source={"type": "load", "id": f"{n}-{i}"})
+            if response.status_code != 201:
+                failures.append(response.content)
 
-    threads = [threading.Thread(target=worker, args=(n,)) for n in range(THREADS)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    in_threads(THREADS, worker)
 
     assert failures == []
     assert JournalEntry.objects.count() == THREADS * PER_THREAD

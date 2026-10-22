@@ -1,47 +1,41 @@
-import threading
 from datetime import timedelta
 from typing import Any
 
 import pytest
-from django.db import connection
 from django.utils import timezone
-from rest_framework.test import APIClient
 
-from tally.adapters.models import Account, IdempotencyRecord, JournalEntry, Tenant
+from tally.adapters.models import IdempotencyRecord, JournalEntry, Tenant
 from tally.adapters.tasks import expire_idempotency
-from tests.api.conftest import entry_body
+from tests.api.conftest import Idem, client_for, in_threads
+from tests.conftest import Ledger, chart_for
 
-Ledger = tuple[Tenant, Account, Account]
-BODY = entry_body(("1200", "149.00"), ("4000", "-149.00"))
-
-
-def post(client: APIClient, key: str, body: dict[str, object] = BODY) -> Any:
-    return client.post("/api/entries", body, format="json", HTTP_IDEMPOTENCY_KEY=key)
+LINES = (("1200", "149.00"), ("4000", "-149.00"))
 
 
 @pytest.mark.django_db
-def test_write_without_key_is_400(client: APIClient, ledger: Ledger) -> None:
-    response = client.post("/api/entries", BODY, format="json", HTTP_IDEMPOTENCY_KEY="")
+def test_write_without_key_is_400(client: Idem, ledger: Ledger) -> None:
+    response = client.post_entry(*LINES, key="")
     assert response.status_code == 400
     assert response.json()["type"].endswith("/idempotency-key-required")
     assert JournalEntry.objects.count() == 0
 
 
 @pytest.mark.django_db
-def test_same_key_same_body_replays_the_stored_response(client: APIClient, ledger: Ledger) -> None:
-    first = post(client, "k1")
-    second = post(client, "k1")
+def test_same_key_same_body_replays_the_stored_response(client: Idem, ledger: Ledger) -> None:
+    first = client.post_entry(*LINES, key="k1")
+    second = client.post_entry(*LINES, key="k1")
     assert first.status_code == second.status_code == 201
     assert first.content == second.content  # byte-identical, not just equal
     assert "Idempotent-Replayed" not in first
     assert second["Idempotent-Replayed"] == "true"
+    assert second["Content-Type"] == "application/json"
     assert JournalEntry.objects.count() == 1
 
 
 @pytest.mark.django_db
-def test_same_key_different_body_is_422(client: APIClient, ledger: Ledger) -> None:
-    post(client, "k1")
-    response = post(client, "k1", entry_body(("1200", "1"), ("4000", "-1")))
+def test_same_key_different_body_is_422(client: Idem, ledger: Ledger) -> None:
+    client.post_entry(*LINES, key="k1")
+    response = client.post_entry(("1200", "1"), ("4000", "-1"), key="k1")
     assert response.status_code == 422
     assert response.json()["idempotency_key"] == "k1"
     assert JournalEntry.objects.count() == 1
@@ -49,34 +43,28 @@ def test_same_key_different_body_is_422(client: APIClient, ledger: Ledger) -> No
 
 @pytest.mark.django_db
 def test_failed_attempt_is_not_stored_so_a_corrected_retry_succeeds(
-    client: APIClient, ledger: Ledger
+    client: Idem, ledger: Ledger
 ) -> None:
-    bad = post(client, "k1", entry_body(("1200", "1"), ("4000", "-2")))
+    bad = client.post_entry(("1200", "1"), ("4000", "-2"), key="k1")
     assert bad.status_code == 422
     assert IdempotencyRecord.objects.count() == 0
-    assert post(client, "k1").status_code == 201
+    assert client.post_entry(*LINES, key="k1").status_code == 201
 
 
 @pytest.mark.django_db
 def test_keys_are_scoped_per_tenant(
-    client: APIClient, other_client: APIClient, ledger: Ledger
+    client: Idem, other_client: Idem, other_tenant: Tenant, ledger: Ledger
 ) -> None:
-    other_tenant = Tenant.objects.get(name="other")
-    Account.objects.create(
-        tenant=other_tenant, code="1200", name="AR", type="asset", currency="USD"
-    )
-    Account.objects.create(
-        tenant=other_tenant, code="4000", name="Rev", type="revenue", currency="USD"
-    )
-    assert post(client, "shared").status_code == 201
-    response = post(other_client, "shared")
+    chart_for(other_tenant)
+    assert client.post_entry(*LINES, key="shared").status_code == 201
+    response = other_client.post_entry(*LINES, key="shared")
     assert response.status_code == 201 and "Idempotent-Replayed" not in response
     assert JournalEntry.objects.count() == 2
 
 
 @pytest.mark.django_db
-def test_reverse_is_idempotent_too(client: APIClient, ledger: Ledger) -> None:
-    entry_id = post(client, "k1").json()["id"]
+def test_reverse_is_idempotent_too(client: Idem, ledger: Ledger) -> None:
+    entry_id = client.post_entry(*LINES).json()["id"]
     url = f"/api/entries/{entry_id}/reverse"
     first = client.post(url, {}, format="json", HTTP_IDEMPOTENCY_KEY="r1")
     second = client.post(url, {}, format="json", HTTP_IDEMPOTENCY_KEY="r1")
@@ -84,27 +72,13 @@ def test_reverse_is_idempotent_too(client: APIClient, ledger: Ledger) -> None:
     assert second.status_code == 201 and second["Idempotent-Replayed"] == "true"
     assert first.content == second.content
     assert JournalEntry.objects.count() == 2
+    assert JournalEntry.objects.get(reverses_id=entry_id).idempotency_key == "r1"
 
 
 @pytest.mark.django_db(transaction=True)
 def test_concurrent_requests_with_one_key_post_exactly_once(api_key: str, ledger: Ledger) -> None:
     results: list[Any] = []
-    barrier = threading.Barrier(8)
-
-    def fire() -> None:
-        client = APIClient()
-        client.credentials(HTTP_X_API_KEY=api_key)
-        barrier.wait()
-        try:
-            results.append(post(client, "race"))
-        finally:
-            connection.close()
-
-    threads = [threading.Thread(target=fire) for _ in range(8)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    in_threads(8, lambda _: results.append(client_for(api_key).post_entry(*LINES, key="race")))
 
     assert [r.status_code for r in results] == [201] * 8
     assert len({r.content for r in results}) == 1
@@ -113,12 +87,12 @@ def test_concurrent_requests_with_one_key_post_exactly_once(api_key: str, ledger
 
 
 @pytest.mark.django_db
-def test_expire_task_deletes_records_older_than_24_hours(client: APIClient, ledger: Ledger) -> None:
-    post(client, "old")
-    post(client, "fresh")
+def test_expire_task_deletes_records_older_than_24_hours(client: Idem, ledger: Ledger) -> None:
+    client.post_entry(*LINES, key="old")
+    client.post_entry(*LINES, key="fresh")
     IdempotencyRecord.objects.filter(key="old").update(
         created_at=timezone.now() - timedelta(hours=25)
     )
     assert expire_idempotency() == 1
     assert list(IdempotencyRecord.objects.values_list("key", flat=True)) == ["fresh"]
-    assert post(client, "old").status_code == 201  # key free again
+    assert client.post_entry(*LINES, key="old").status_code == 201  # key free again

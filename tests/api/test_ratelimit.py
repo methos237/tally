@@ -3,10 +3,10 @@ from django_redis import get_redis_connection
 from rest_framework.test import APIClient
 
 from tally.adapters import ratelimit
-from tally.adapters.models import Account, Tenant
+from tally.adapters.models import Tenant
 from tally.api import throttle
+from tally.api.problems import MEDIA_TYPE
 
-Ledger = tuple[Tenant, Account, Account]
 T0 = 1_700_000_000_000
 
 
@@ -54,7 +54,7 @@ def test_headers_on_success_and_429_problem_when_exhausted(
 
     third = client.get("/api/me")
     assert third.status_code == 429
-    assert third["Content-Type"] == "application/problem+json"
+    assert third["Content-Type"] == MEDIA_TYPE
     assert third.json()["title"] == "Too Many Requests"
     assert third["Retry-After"] == "30"
     assert (third["RateLimit-Remaining"], third["RateLimit-Reset"]) == ("0", "60")

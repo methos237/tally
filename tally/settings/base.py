@@ -57,7 +57,6 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_BEAT_SCHEDULE = {
     "expire-idempotency": {"task": "tally.adapters.tasks.expire_idempotency", "schedule": 3600},
 }
-CELERY_TASK_ALWAYS_EAGER = False
 
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",

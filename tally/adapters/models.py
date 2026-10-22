@@ -4,6 +4,9 @@ journal_entries and journal_lines are append-only; see migration 0002 for
 the triggers that enforce it and the deferred balancing check.
 """
 
+from secrets import token_urlsafe
+
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
 
 from tally.domain.journal import AccountType
@@ -18,6 +21,7 @@ class Tenant(models.Model):
     rate_limit_per_minute = models.PositiveIntegerField(
         null=True, blank=True, help_text="Overrides RATE_LIMIT_PER_MINUTE for this tenant's keys"
     )
+    is_authenticated = True  # a Tenant is the API principal (request.user); see tally.api.auth
 
     class Meta:
         db_table = "tenants"
@@ -113,36 +117,31 @@ class ApiKey(models.Model):
         db_table = "api_keys"
 
     @classmethod
-    def issue(cls, tenant: Tenant, name: str) -> tuple["ApiKey", str]:
-        """Create a key and return (row, plaintext). The plaintext is shown exactly once."""
-        from secrets import token_urlsafe
-
-        from django.contrib.auth.hashers import make_password
-
+    def issue(cls, tenant: Tenant, name: str) -> str:
+        """Create a key and return the plaintext, which is shown exactly once."""
         secret = token_urlsafe(32)
         plaintext = f"{cls.PREFIX}{secret}"
-        row = cls.objects.create(
+        cls.objects.create(
             tenant=tenant,
             name=name,
             prefix=secret[: cls.PREFIX_LEN],
             key_hash=make_password(plaintext, hasher="argon2"),
         )
-        return row, plaintext
+        return plaintext
 
     @classmethod
     def authenticate(cls, plaintext: str) -> "ApiKey | None":
-        """The live key matching `plaintext`, or None. Constant work for bad prefixes."""
-        from django.contrib.auth.hashers import check_password
-
+        """The live key matching `plaintext`, or None."""
         if not plaintext.startswith(cls.PREFIX):
             return None
-        prefix = plaintext[len(cls.PREFIX) :][: cls.PREFIX_LEN]
-        live = cls.objects.filter(prefix=prefix, revoked_at__isnull=True)
-        row = live.select_related("tenant").first()
-        # ponytail: one Argon2 verify per request; cache verified keys in Redis if p95 matters
-        if row is None or not check_password(plaintext, row.key_hash):
-            return None
-        return row
+        prefix = plaintext.removeprefix(cls.PREFIX)[: cls.PREFIX_LEN]
+        row = (
+            cls.objects.filter(prefix=prefix, revoked_at__isnull=True)
+            .select_related("tenant")
+            .first()
+        )
+        # ponytail: one Argon2 verify (~26 ms) per request; cache verified keys in Redis if needed
+        return row if row and check_password(plaintext, row.key_hash) else None
 
 
 class IdempotencyRecord(models.Model):

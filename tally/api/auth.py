@@ -1,42 +1,33 @@
-"""X-Api-Key authentication. The authenticated principal is the tenant."""
+"""X-Api-Key authentication. The authenticated principal (request.user) is the Tenant."""
 
-from dataclasses import dataclass
 from typing import cast
 
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
 from rest_framework.request import Request
 
-from tally.adapters.models import ApiKey
+from tally.adapters.models import ApiKey, Tenant
 
 HEADER = "X-Api-Key"
 
 
-@dataclass(frozen=True, slots=True)
-class Principal:
-    tenant_id: int
-    tenant_name: str
-    api_key_id: int
-    is_authenticated: bool = True
-
-
 class ApiKeyAuthentication(authentication.BaseAuthentication):
-    def authenticate(self, request: Request) -> tuple[Principal, ApiKey]:
+    def authenticate(self, request: Request) -> tuple[Tenant, ApiKey]:
         presented = request.headers.get(HEADER)
         if not presented:
             raise exceptions.NotAuthenticated(f"Missing {HEADER} header")
         key = ApiKey.authenticate(presented)
         if key is None:
             raise exceptions.AuthenticationFailed("Unknown or revoked API key")
-        return Principal(key.tenant_id, key.tenant.name, key.id), key
+        return key.tenant, key
 
     def authenticate_header(self, request: Request) -> str:
         return HEADER
 
 
-def principal(request: Request) -> Principal:
+def tenant_of(request: Request) -> Tenant:
     """The authenticated tenant. Views only run after ApiKeyAuthentication succeeded."""
-    return cast(Principal, request.user)
+    return cast(Tenant, request.user)
 
 
 class ApiKeyScheme(OpenApiAuthenticationExtension):  # type: ignore[no-untyped-call]

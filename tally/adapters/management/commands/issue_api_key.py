@@ -14,5 +14,4 @@ class Command(BaseCommand):
 
     def handle(self, *args: Any, **options: Any) -> None:
         tenant = Tenant.objects.get(name=options["tenant"])
-        _, plaintext = ApiKey.issue(tenant, options["name"])
-        self.stdout.write(plaintext)
+        self.stdout.write(ApiKey.issue(tenant, options["name"]))

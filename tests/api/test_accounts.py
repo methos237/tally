@@ -1,15 +1,13 @@
 import pytest
 from rest_framework.test import APIClient
 
-from tally.adapters.models import Account, Tenant
-from tests.api.conftest import entry_body
-
-Ledger = tuple[Tenant, Account, Account]
+from tests.api.conftest import Idem
+from tests.conftest import Ledger
 
 
 @pytest.mark.django_db
 def test_accounts_list_is_scoped_to_the_tenant(
-    client: APIClient, other_client: APIClient, ledger: Ledger
+    client: Idem, other_client: Idem, ledger: Ledger
 ) -> None:
     codes = [a["code"] for a in client.get("/api/accounts").json()["results"]]
     assert codes == ["1200", "4000"]
@@ -17,14 +15,10 @@ def test_accounts_list_is_scoped_to_the_tenant(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_balance_now_and_as_of(client: APIClient, ledger: Ledger) -> None:
+def test_balance_now_and_as_of(client: Idem, ledger: Ledger) -> None:
     for day, amount in ((1, "10"), (2, "20"), (3, "40")):
-        client.post(
-            "/api/entries",
-            entry_body(
-                ("1200", amount), ("4000", f"-{amount}"), occurred_at=f"2026-01-0{day}T12:00:00Z"
-            ),
-            format="json",
+        client.post_entry(
+            ("1200", amount), ("4000", f"-{amount}"), occurred_at=f"2026-01-0{day}T12:00:00Z"
         )
     now = client.get("/api/accounts/1200/balance").json()
     assert now["balance"] == "70.000000" and now["currency"] == "USD" and now["as_of"]
@@ -37,7 +31,7 @@ def test_balance_now_and_as_of(client: APIClient, ledger: Ledger) -> None:
 
 
 @pytest.mark.django_db
-def test_balance_errors(client: APIClient, other_client: APIClient, ledger: Ledger) -> None:
+def test_balance_errors(client: Idem, other_client: Idem, ledger: Ledger) -> None:
     assert client.get("/api/accounts/9999/balance").status_code == 404
     assert other_client.get("/api/accounts/1200/balance").status_code == 404
     bad = client.get("/api/accounts/1200/balance?as_of=2026-01-01")
@@ -61,4 +55,6 @@ def test_openapi_is_public_and_documents_the_key(anon: APIClient) -> None:
         "/api/entries/{entry_id}/reverse",
         "/api/accounts/{code}/balance",
     } <= set(doc["paths"])
+    post_params = doc["paths"]["/api/entries"]["post"]["parameters"]
+    assert any(p["name"] == "Idempotency-Key" and p["required"] for p in post_params)
     assert anon.get("/docs").status_code == 200

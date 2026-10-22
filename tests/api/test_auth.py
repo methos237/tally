@@ -6,8 +6,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from tally.adapters.models import ApiKey, Tenant
-
-PROBLEM = "application/problem+json"
+from tally.api.problems import MEDIA_TYPE
 
 
 @pytest.mark.django_db
@@ -21,7 +20,7 @@ def test_valid_key_resolves_the_tenant(client: APIClient, tenant: Tenant) -> Non
 def test_missing_key_is_401_problem_details(anon: APIClient) -> None:
     response = anon.get("/api/me")
     assert response.status_code == 401
-    assert response["Content-Type"] == PROBLEM
+    assert response["Content-Type"] == MEDIA_TYPE
     assert response["WWW-Authenticate"] == "X-Api-Key"
     assert response.json() == {
         "type": "https://tally.dev/problems/unauthorized",
@@ -70,7 +69,7 @@ def test_issue_api_key_command_prints_the_key_once(tenant: Tenant) -> None:
 def test_wrong_method_is_problem_details_too(client: APIClient) -> None:
     response = client.post("/api/me", {}, format="json")
     assert response.status_code == 405
-    assert response["Content-Type"] == PROBLEM
+    assert response["Content-Type"] == MEDIA_TYPE
     assert response.json()["status"] == 405
     assert "GET" in response["Allow"]
     assert response.json()["title"] == "Method Not Allowed"

@@ -1,63 +1,31 @@
+import threading
+from collections.abc import Callable
 from typing import Any
+from uuid import uuid4
 
 import pytest
+from django.db import connection
 from rest_framework.test import APIClient
 
-from tally.adapters.models import Account, ApiKey, Tenant
-
-
-@pytest.fixture
-def tenant() -> Tenant:
-    return Tenant.objects.create(name="acme")
-
-
-@pytest.fixture
-def api_key(tenant: Tenant) -> str:
-    _, plaintext = ApiKey.issue(tenant, "test")
-    return plaintext
-
-
-@pytest.fixture
-def client(api_key: str) -> APIClient:
-    """An APIClient already carrying the tenant's X-Api-Key."""
-    return Idem(api_key)
+from tally.adapters.models import ApiKey, Tenant
 
 
 class Idem(APIClient):
-    """APIClient carrying the key and a fresh Idempotency-Key per POST unless one is given."""
-
-    def __init__(self, api_key: str) -> None:
-        super().__init__()
-        self.credentials(HTTP_X_API_KEY=api_key)
-        self.counter = 0
+    """APIClient that sends a fresh Idempotency-Key on every POST unless one is given."""
 
     def post(self, *args: Any, **kwargs: Any) -> Any:
-        if "HTTP_IDEMPOTENCY_KEY" not in kwargs and "headers" not in kwargs:
-            self.counter += 1
-            kwargs["HTTP_IDEMPOTENCY_KEY"] = f"auto-{self.counter}"
+        kwargs.setdefault("HTTP_IDEMPOTENCY_KEY", uuid4().hex)
         return super().post(*args, **kwargs)
 
-
-@pytest.fixture
-def anon() -> APIClient:
-    return APIClient()
-
-
-@pytest.fixture
-def ledger(tenant: Tenant) -> tuple[Tenant, Account, Account]:
-    ar = Account.objects.create(tenant=tenant, code="1200", name="AR", type="asset", currency="USD")
-    rev = Account.objects.create(
-        tenant=tenant, code="4000", name="Revenue", type="revenue", currency="USD"
-    )
-    return tenant, ar, rev
+    def post_entry(self, *lines: tuple[str, str], key: str | None = None, **overrides: Any) -> Any:
+        extra = {"HTTP_IDEMPOTENCY_KEY": key} if key is not None else {}
+        return self.post("/api/entries", entry_body(*lines, **overrides), format="json", **extra)
 
 
-@pytest.fixture
-def other_client() -> APIClient:
-    """A second tenant's client, for the 404-not-403 tests."""
-    other = Tenant.objects.create(name="other")
-    _, plaintext = ApiKey.issue(other, "test")
-    return Idem(plaintext)
+def client_for(api_key: str) -> Idem:
+    client = Idem()
+    client.credentials(HTTP_X_API_KEY=api_key)
+    return client
 
 
 def entry_body(
@@ -72,3 +40,47 @@ def entry_body(
     }
     body.update(overrides)
     return body
+
+
+def in_threads(n: int, body: Callable[[int], None]) -> None:
+    """Run body(i) on n threads released together; each thread closes its DB connection."""
+    barrier = threading.Barrier(n)
+
+    def run(i: int) -> None:
+        barrier.wait()
+        try:
+            body(i)
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+
+@pytest.fixture
+def api_key(tenant: Tenant) -> str:
+    return ApiKey.issue(tenant, "test")
+
+
+@pytest.fixture
+def client(api_key: str) -> Idem:
+    return client_for(api_key)
+
+
+@pytest.fixture
+def anon() -> APIClient:
+    return APIClient()
+
+
+@pytest.fixture
+def other_tenant() -> Tenant:
+    return Tenant.objects.create(name="other")
+
+
+@pytest.fixture
+def other_client(other_tenant: Tenant) -> Idem:
+    """A second tenant's client, for the 404-not-403 tests."""
+    return client_for(ApiKey.issue(other_tenant, "test"))

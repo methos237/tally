@@ -18,8 +18,8 @@ class AmountField(serializers.DecimalField):
         super().__init__(max_digits=18, decimal_places=6, **kwargs)
 
     def to_internal_value(self, data: int | float | str | Decimal) -> Decimal:
-        if isinstance(data, float):
-            self.fail("invalid")
+        if not isinstance(data, str):
+            self.fail("invalid")  # a JSON number, int or float, never reaches Decimal
         return super().to_internal_value(data)
 
 

@@ -40,9 +40,8 @@ class Decision:
 
 def take(bucket: str, limit_per_minute: int, now_ms: int) -> Decision:
     per_ms = limit_per_minute / 60_000
-    allowed, tokens = get_redis_connection("default").eval(
-        SCRIPT, 1, bucket, limit_per_minute, per_ms, now_ms
-    )
+    script = get_redis_connection("default").register_script(SCRIPT)  # EVALSHA, EVAL on miss
+    allowed, tokens = script(keys=[bucket], args=[limit_per_minute, per_ms, now_ms])
     tokens_f = float(tokens)
     return Decision(
         allowed=bool(allowed),

@@ -4,7 +4,7 @@ from tally.adapters.models import Account, JournalLine, Tenant
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import AlreadyReversed, PostEntry, ReverseEntry
 from tally.domain.journal import JournalEntry, UnknownAccount
-from tests.adapters.conftest import fold_from_journal
+from tests.conftest import Ledger, fold_from_journal
 from tests.domain.strategies import NOW, entry
 
 
@@ -13,7 +13,7 @@ def ledger_entry(tenant: Tenant, *lines: tuple[Account, str]) -> JournalEntry:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_post_and_reverse_through_the_database(ledger: tuple[Tenant, Account, Account]) -> None:
+def test_post_and_reverse_through_the_database(ledger: Ledger) -> None:
     tenant, ar, rev = ledger
     repo = DjangoJournalRepository()
 
@@ -28,9 +28,7 @@ def test_post_and_reverse_through_the_database(ledger: tuple[Tenant, Account, Ac
 
 
 @pytest.mark.django_db(transaction=True)
-def test_reversing_twice_is_refused_by_the_one_to_one_link(
-    ledger: tuple[Tenant, Account, Account],
-) -> None:
+def test_reversing_twice_is_refused_by_the_one_to_one_link(ledger: Ledger) -> None:
     tenant, ar, rev = ledger
     repo = DjangoJournalRepository()
     posted = PostEntry(repo)(ledger_entry(tenant, (ar, "1"), (rev, "-1")))
@@ -42,7 +40,7 @@ def test_reversing_twice_is_refused_by_the_one_to_one_link(
 
 
 @pytest.mark.django_db
-def test_other_tenants_accounts_are_invisible(ledger: tuple[Tenant, Account, Account]) -> None:
+def test_other_tenants_accounts_are_invisible(ledger: Ledger) -> None:
     tenant, ar, _ = ledger
     other = Tenant.objects.create(name="other")
     foreign = Account.objects.create(
@@ -53,7 +51,7 @@ def test_other_tenants_accounts_are_invisible(ledger: tuple[Tenant, Account, Acc
 
 
 @pytest.mark.django_db
-def test_get_filters_by_tenant(ledger: tuple[Tenant, Account, Account]) -> None:
+def test_get_filters_by_tenant(ledger: Ledger) -> None:
     tenant, ar, rev = ledger
     repo = DjangoJournalRepository()
     posted = PostEntry(repo)(ledger_entry(tenant, (ar, "1"), (rev, "-1")))

@@ -33,8 +33,9 @@ not a silent one.
   asserts the exact final balances.
 - The projection upsert is one `INSERT ... ON CONFLICT DO UPDATE` statement per entry, which
   Postgres applies atomically per row. The account locks are therefore not what keeps the
-  projection correct today; they exist so that any read-modify-write inside posting (balance
-  checks, Phase 3 invoicing) is already serialized per account.
+  projection correct today; they serialize the insert and the upsert per account. A read that
+  must be protected by the lock (a balance check before posting, Phase 3) has to run after the
+  repository opens it, inside the same transaction.
 - Concurrent requests with the same `Idempotency-Key` block on the unique index of
   `idempotency_records` until the first transaction commits; the rest replay its response.
   Eight threads with one key produce one entry.
