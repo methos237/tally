@@ -12,6 +12,7 @@ from decimal import ROUND_HALF_EVEN, Decimal
 from enum import StrEnum
 
 STORED_PLACES = Decimal("0.000001")
+MAX_ABS = Decimal("1e12")  # numeric(18,6): 12 integer digits
 
 
 class Currency(StrEnum):
@@ -23,6 +24,12 @@ class Currency(StrEnum):
     @property
     def exponent(self) -> int:
         return 0 if self is Currency.JPY else 2
+
+
+class AmountOutOfRange(ValueError):
+    def __init__(self, amount: Decimal) -> None:
+        super().__init__(f"|{amount}| must be below {MAX_ABS:.0f} to fit numeric(18,6)")
+        self.amount = amount
 
 
 class CurrencyMismatch(ValueError):
@@ -39,7 +46,9 @@ class Money:
     def __post_init__(self) -> None:
         if isinstance(self.amount, float):
             raise TypeError("Money amount must be Decimal, not float")
-        quantized = Decimal(self.amount).quantize(STORED_PLACES, rounding=ROUND_HALF_EVEN)
+        if not self.amount.is_finite() or abs(self.amount) >= MAX_ABS:
+            raise AmountOutOfRange(self.amount)
+        quantized = self.amount.quantize(STORED_PLACES, rounding=ROUND_HALF_EVEN)
         object.__setattr__(self, "amount", quantized)
 
     @classmethod

@@ -4,7 +4,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from tally.domain.money import Currency, CurrencyMismatch, Money
+from tally.domain.money import AmountOutOfRange, Currency, CurrencyMismatch, Money
 from tests.domain import strategies
 
 usd = Currency.USD
@@ -38,7 +38,15 @@ def test_mixed_currencies_refuse_arithmetic(a: Money, b: Money) -> None:
             a - b
 
 
-@given(st.decimals(allow_nan=False, allow_infinity=False, places=12))
+@given(
+    st.decimals(
+        min_value=Decimal("-999999999999"),
+        max_value=Decimal("999999999999"),
+        allow_nan=False,
+        allow_infinity=False,
+        places=12,
+    )
+)
 def test_construction_quantizes_to_six_places_half_even(amount: Decimal) -> None:
     assert Money(amount, usd).amount == amount.quantize(
         Decimal("0.000001"), rounding="ROUND_HALF_EVEN"
@@ -59,3 +67,10 @@ def test_display_uses_currency_exponent() -> None:
 def test_floats_are_refused() -> None:
     with pytest.raises(TypeError):
         Money(1.5, usd)  # type: ignore[arg-type]
+
+
+def test_amounts_that_do_not_fit_numeric_18_6_are_refused() -> None:
+    assert Money(Decimal("999999999999.999999"), usd).amount == Decimal("999999999999.999999")
+    for bad in (Decimal("1e12"), Decimal("-1e12"), Decimal("NaN"), Decimal("Infinity")):
+        with pytest.raises(AmountOutOfRange):
+            Money(bad, usd)
