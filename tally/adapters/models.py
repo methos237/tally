@@ -4,7 +4,6 @@ journal_entries and journal_lines are append-only; see migration 0002 for
 the triggers that enforce it and the deferred balancing check.
 """
 
-from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 
 from tally.domain.journal import AccountType
@@ -155,7 +154,7 @@ class IdempotencyRecord(models.Model):
     key = models.CharField(max_length=255)
     request_hash = models.CharField(max_length=64)
     response_status = models.PositiveSmallIntegerField(null=True)
-    response_body = models.JSONField(null=True, encoder=DjangoJSONEncoder)
+    response_body = models.TextField(null=True, help_text="rendered JSON, replayed byte for byte")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

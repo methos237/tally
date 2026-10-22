@@ -18,6 +18,7 @@ from typing import Any
 from django.db import IntegrityError, transaction
 from drf_spectacular.utils import OpenApiParameter
 from rest_framework import status
+from rest_framework.renderers import JSONRenderer
 from rest_framework.request import Request
 from rest_framework.response import Response
 
@@ -87,12 +88,15 @@ def idempotent(handler: Handler) -> Handler:
                         f"{HEADER} {key!r} was already used with a different request body",
                         idempotency_key=key,
                     )
-                replay = Response(record.response_body, status=record.response_status)
+                replay = Response(
+                    json.loads(record.response_body or "null"), status=record.response_status
+                )
                 replay[REPLAYED] = "true"
                 return replay
             response = handler(self, request, *args, **kwargs)
             record.response_status = response.status_code
-            record.response_body = response.data
+            # Rendered text, not jsonb: jsonb reorders keys and a replay must be byte-identical.
+            record.response_body = JSONRenderer().render(response.data).decode()
             record.save(update_fields=["response_status", "response_body"])
         return response
 

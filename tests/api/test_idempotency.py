@@ -32,7 +32,7 @@ def test_same_key_same_body_replays_the_stored_response(client: APIClient, ledge
     first = post(client, "k1")
     second = post(client, "k1")
     assert first.status_code == second.status_code == 201
-    assert first.json() == second.json()
+    assert first.content == second.content  # byte-identical, not just equal
     assert "Idempotent-Replayed" not in first
     assert second["Idempotent-Replayed"] == "true"
     assert JournalEntry.objects.count() == 1
@@ -82,7 +82,7 @@ def test_reverse_is_idempotent_too(client: APIClient, ledger: Ledger) -> None:
     second = client.post(url, {}, format="json", HTTP_IDEMPOTENCY_KEY="r1")
     assert first.status_code == 201
     assert second.status_code == 201 and second["Idempotent-Replayed"] == "true"
-    assert first.json() == second.json()
+    assert first.content == second.content
     assert JournalEntry.objects.count() == 2
 
 
@@ -107,7 +107,7 @@ def test_concurrent_requests_with_one_key_post_exactly_once(api_key: str, ledger
         t.join()
 
     assert [r.status_code for r in results] == [201] * 8
-    assert all(r.json() == results[0].json() for r in results)
+    assert len({r.content for r in results}) == 1
     assert sum(r.get("Idempotent-Replayed") == "true" for r in results) == 7
     assert JournalEntry.objects.count() == 1
 
