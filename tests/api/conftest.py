@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from rest_framework.test import APIClient
 
@@ -18,9 +20,22 @@ def api_key(tenant: Tenant) -> str:
 @pytest.fixture
 def client(api_key: str) -> APIClient:
     """An APIClient already carrying the tenant's X-Api-Key."""
-    client = APIClient()
-    client.credentials(HTTP_X_API_KEY=api_key)
-    return client
+    return Idem(api_key)
+
+
+class Idem(APIClient):
+    """APIClient carrying the key and a fresh Idempotency-Key per POST unless one is given."""
+
+    def __init__(self, api_key: str) -> None:
+        super().__init__()
+        self.credentials(HTTP_X_API_KEY=api_key)
+        self.counter = 0
+
+    def post(self, *args: Any, **kwargs: Any) -> Any:
+        if "HTTP_IDEMPOTENCY_KEY" not in kwargs and "headers" not in kwargs:
+            self.counter += 1
+            kwargs["HTTP_IDEMPOTENCY_KEY"] = f"auto-{self.counter}"
+        return super().post(*args, **kwargs)
 
 
 @pytest.fixture
@@ -42,9 +57,7 @@ def other_client() -> APIClient:
     """A second tenant's client, for the 404-not-403 tests."""
     other = Tenant.objects.create(name="other")
     _, plaintext = ApiKey.issue(other, "test")
-    client = APIClient()
-    client.credentials(HTTP_X_API_KEY=plaintext)
-    return client
+    return Idem(plaintext)
 
 
 def entry_body(

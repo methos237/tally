@@ -4,6 +4,7 @@ journal_entries and journal_lines are append-only; see migration 0002 for
 the triggers that enforce it and the deferred balancing check.
 """
 
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 
 from tally.domain.journal import AccountType
@@ -140,3 +141,23 @@ class ApiKey(models.Model):
         if row is None or not check_password(plaintext, row.key_hash):
             return None
         return row
+
+
+class IdempotencyRecord(models.Model):
+    """One row per (tenant, Idempotency-Key). Claimed inside the write's transaction;
+    the response is filled in before commit, so a retry sees either nothing or the
+    complete stored response, never a half-written one."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="+")
+    key = models.CharField(max_length=255)
+    request_hash = models.CharField(max_length=64)
+    response_status = models.PositiveSmallIntegerField(null=True)
+    response_body = models.JSONField(null=True, encoder=DjangoJSONEncoder)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "idempotency_records"
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "key"], name="uq_idempotency_tenant_key")
+        ]
+        indexes = [models.Index(fields=["created_at"], name="ix_idempotency_created")]

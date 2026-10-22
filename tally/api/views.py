@@ -20,6 +20,8 @@ from tally.adapters import models
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.api import serializers
 from tally.api.auth import principal
+from tally.api.idempotency import OPENAPI_PARAMETER as IDEMPOTENCY_KEY
+from tally.api.idempotency import idempotent
 from tally.api.problems import Conflict, NotFound, Unprocessable
 from tally.application.journal import AlreadyReversed, EntryNotFound, PostEntry, ReverseEntry
 from tally.domain.journal import JournalEntry, Line
@@ -85,7 +87,12 @@ class EntryList(generics.ListCreateAPIView[models.JournalEntry]):
             qs = qs.filter(lines__account__code=code).distinct()
         return qs
 
-    @extend_schema(request=serializers.EntryIn, responses={201: serializers.EntryOut})
+    @extend_schema(
+        request=serializers.EntryIn,
+        responses={201: serializers.EntryOut},
+        parameters=[IDEMPOTENCY_KEY],
+    )
+    @idempotent
     def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         body = serializers.EntryIn(data=request.data)
         body.is_valid(raise_exception=True)
@@ -126,7 +133,12 @@ class EntryDetail(APIView):
 
 
 class EntryReverse(APIView):
-    @extend_schema(request=serializers.ReverseIn, responses={201: serializers.EntryOut})
+    @extend_schema(
+        request=serializers.ReverseIn,
+        responses={201: serializers.EntryOut},
+        parameters=[IDEMPOTENCY_KEY],
+    )
+    @idempotent
     def post(self, request: Request, entry_id: int) -> Response:
         body = serializers.ReverseIn(data=request.data)
         body.is_valid(raise_exception=True)
