@@ -19,4 +19,4 @@ test:
 	uv run pytest -m "not live"
 
 lint:
-	uv run ruff format --check . && uv run ruff check . && uv run mypy tally/domain tally/api && uv run lint-imports
+	uv run ruff format --check . && uv run ruff check . && uv run mypy tally && uv run lint-imports
