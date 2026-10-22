@@ -1,0 +1,37 @@
+# Local AI context
+CLAUDE.md
+.claude/
+.aidocs/
+.remember/
+supertool
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+staticfiles/
+
+# Node (console)
+node_modules/
+console/dist/
+console/storybook-static/
+console/cypress/screenshots/
+console/cypress/videos/
+coverage/
+
+# Airflow
+airflow/logs/
