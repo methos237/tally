@@ -10,9 +10,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 
 from tally.domain.money import Currency, CurrencyMismatch, Money
+
+MAX_LINE_ABS = Decimal("1e12")  # journal_lines.amount is numeric(18,6): 12 integer digits
 
 
 class AccountType(StrEnum):
@@ -49,7 +52,6 @@ class JournalEntry:
     posted_at: datetime | None = None
     idempotency_key: str | None = None
     reverses_id: int | None = None
-    reversed_by_id: int | None = None
 
 
 class PostingError(ValueError):
@@ -66,6 +68,12 @@ class ZeroLine(PostingError):
     def __init__(self, index: int) -> None:
         super().__init__(f"line {index} has a zero amount")
         self.index = index
+
+
+class AmountOutOfRange(PostingError):
+    def __init__(self, index: int, amount: Money) -> None:
+        super().__init__(f"line {index} amount {amount.amount} does not fit numeric(18,6)")
+        self.index, self.amount = index, amount
 
 
 class UnbalancedEntry(PostingError):
@@ -85,21 +93,22 @@ def post(entry: JournalEntry, accounts: Mapping[int, Account]) -> JournalEntry:
     """Validate the entry against the posting rule and return it unchanged.
 
     Checks run in a fixed order so a failure is reproducible from its input:
-    line count, zero lines, account existence and currency, then balance.
+    line count, zero or oversized lines, account existence and currency, then balance.
     """
     if len(entry.lines) < 2:
         raise SingleLineEntry(len(entry.lines))
     for index, line in enumerate(entry.lines):
         if line.amount.is_zero:
             raise ZeroLine(index)
+        if abs(line.amount.amount) >= MAX_LINE_ABS:
+            raise AmountOutOfRange(index, line.amount)
+    totals: dict[Currency, Money] = {}
     for line in entry.lines:
         account = accounts.get(line.account_id)
         if account is None or account.tenant_id != entry.tenant_id:
             raise UnknownAccount(line.account_id)
         if account.currency is not line.amount.currency:
             raise CurrencyMismatch(account.currency, line.amount.currency)
-    totals: dict[Currency, Money] = {}
-    for line in entry.lines:
         cur = line.amount.currency
         totals[cur] = totals.get(cur, Money.zero(cur)) + line.amount
     for currency, total in totals.items():

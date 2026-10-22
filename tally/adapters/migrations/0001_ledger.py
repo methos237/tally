@@ -53,6 +53,7 @@ class Migration(migrations.Migration):
                 (
                     "tenant",
                     models.ForeignKey(
+                        db_index=False,
                         on_delete=django.db.models.deletion.PROTECT,
                         related_name="entries",
                         to="adapters.tenant",
@@ -97,6 +98,7 @@ class Migration(migrations.Migration):
                 (
                     "tenant",
                     models.ForeignKey(
+                        db_index=False,
                         on_delete=django.db.models.deletion.PROTECT,
                         related_name="accounts",
                         to="adapters.tenant",
@@ -143,6 +145,7 @@ class Migration(migrations.Migration):
                 (
                     "tenant",
                     models.ForeignKey(
+                        db_index=False,
                         on_delete=django.db.models.deletion.PROTECT,
                         related_name="+",
                         to="adapters.tenant",

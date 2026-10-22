@@ -4,7 +4,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from tally.domain.money import AmountOutOfRange, Currency, CurrencyMismatch, Money
+from tally.domain.money import Currency, CurrencyMismatch, Money
 from tests.domain import strategies
 
 usd = Currency.USD
@@ -69,8 +69,7 @@ def test_floats_are_refused() -> None:
         Money(1.5, usd)  # type: ignore[arg-type]
 
 
-def test_amounts_that_do_not_fit_numeric_18_6_are_refused() -> None:
-    assert Money(Decimal("999999999999.999999"), usd).amount == Decimal("999999999999.999999")
-    for bad in (Decimal("1e12"), Decimal("-1e12"), Decimal("NaN"), Decimal("Infinity")):
-        with pytest.raises(AmountOutOfRange):
+def test_non_finite_amounts_are_refused() -> None:
+    for bad in (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")):
+        with pytest.raises(ValueError):
             Money(bad, usd)

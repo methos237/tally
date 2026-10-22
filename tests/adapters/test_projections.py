@@ -2,20 +2,19 @@
 projection equals a fresh fold over the journal and equals a full replay."""
 
 import random
-from collections import defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from django.core.management import call_command
 
-from tally.adapters.models import Account, AccountBalance, JournalLine, Tenant
+from tally.adapters.models import Account, AccountBalance, Tenant
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import PostEntry, ReverseEntry
 from tally.domain.journal import JournalEntry, Line
 from tally.domain.money import Currency, Money
-
-START = datetime(2026, 1, 1, tzinfo=UTC)
+from tests.adapters.conftest import fold_from_journal, projection
+from tests.domain.strategies import NOW, entry
 
 
 def random_entry(
@@ -25,28 +24,16 @@ def random_entry(
         Decimal(rng.randint(-10_000_000, 10_000_000)) / 100 for _ in range(rng.randint(1, 5))
     ]
     amounts = [a for a in amounts if a != 0] or [Decimal("1")]
-    amounts.append(-sum(amounts))
+    amounts.append(-sum(amounts, Decimal(0)))
     if amounts[-1] == 0:
         amounts[-1:] = [Decimal("7"), Decimal("-7")]
     lines = tuple(Line(rng.choice(accounts).id, Money(a, Currency.USD)) for a in amounts)
-    return JournalEntry(tenant.id, START + timedelta(hours=n), "random", str(n), lines)
-
-
-def fold_from_journal(tenant: Tenant) -> dict[int, Decimal]:
-    totals: dict[int, Decimal] = defaultdict(Decimal)
-    for line in JournalLine.objects.filter(tenant=tenant):
-        totals[line.account_id] += line.amount
-    return dict(totals)
-
-
-def projection(tenant: Tenant) -> dict[int, Decimal]:
-    return {b.account_id: b.balance for b in AccountBalance.objects.filter(tenant=tenant)}
+    return JournalEntry(tenant.id, NOW + timedelta(hours=n), "random", str(n), lines)
 
 
 @pytest.mark.django_db(transaction=True)
-def test_incremental_projection_equals_fold_and_replay() -> None:
+def test_incremental_projection_equals_fold_and_replay(tenant: Tenant) -> None:
     rng = random.Random(20261022)
-    tenant = Tenant.objects.create(name="acme")
     accounts = [
         Account.objects.create(
             tenant=tenant, code=str(1000 + i), name=f"A{i}", type="asset", currency="USD"
@@ -57,7 +44,7 @@ def test_incremental_projection_equals_fold_and_replay() -> None:
     posted = [PostEntry(repo)(random_entry(rng, tenant, accounts, n)) for n in range(60)]
     for e in rng.sample(posted, 10):
         assert e.id is not None
-        ReverseEntry(repo, clock=lambda: START)(tenant.id, e.id)
+        ReverseEntry(repo)(tenant.id, e.id, occurred_at=NOW)
 
     expected = fold_from_journal(tenant)
     assert projection(tenant) == expected
@@ -69,35 +56,11 @@ def test_incremental_projection_equals_fold_and_replay() -> None:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_as_of_tracks_the_latest_posted_entry() -> None:
-    tenant = Tenant.objects.create(name="acme")
-    a = Account.objects.create(tenant=tenant, code="1", name="a", type="asset", currency="USD")
-    b = Account.objects.create(tenant=tenant, code="2", name="b", type="asset", currency="USD")
+def test_as_of_tracks_the_latest_posted_entry(ledger: tuple[Tenant, Account, Account]) -> None:
+    tenant, a, b = ledger
     repo = DjangoJournalRepository()
-    first = PostEntry(repo)(
-        JournalEntry(
-            tenant.id,
-            START,
-            "t",
-            "1",
-            (
-                Line(a.id, Money(Decimal(1), Currency.USD)),
-                Line(b.id, Money(Decimal(-1), Currency.USD)),
-            ),
-        )
-    )
-    second = PostEntry(repo)(
-        JournalEntry(
-            tenant.id,
-            START,
-            "t",
-            "2",
-            (
-                Line(a.id, Money(Decimal(2), Currency.USD)),
-                Line(b.id, Money(Decimal(-2), Currency.USD)),
-            ),
-        )
-    )
+    first = PostEntry(repo)(entry((a.id, "1"), (b.id, "-1"), tenant_id=tenant.id))
+    second = PostEntry(repo)(entry((a.id, "2"), (b.id, "-2"), tenant_id=tenant.id))
     assert first.posted_at is not None and second.posted_at is not None
     assert AccountBalance.objects.get(account=a).as_of == max(first.posted_at, second.posted_at)
     assert AccountBalance.objects.get(account=a).balance == Decimal("3")

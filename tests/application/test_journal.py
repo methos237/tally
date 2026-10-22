@@ -1,17 +1,15 @@
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
 from hypothesis import given
 
 from tally.application.journal import AlreadyReversed, EntryNotFound, PostEntry, ReverseEntry
-from tally.domain.journal import Account, JournalEntry, Line, UnbalancedEntry, UnknownAccount
-from tally.domain.money import Currency, Money
+from tally.domain.journal import Account, JournalEntry, UnbalancedEntry, UnknownAccount
+from tally.domain.money import Currency
 from tests.domain import strategies
-from tests.domain.strategies import TENANT, chart
-
-NOW = datetime(2026, 1, 1, tzinfo=UTC)
+from tests.domain.strategies import NOW, TENANT, chart, entry
 
 
 class FakeJournal:
@@ -27,33 +25,17 @@ class FakeJournal:
         }
 
     def add(self, entry: JournalEntry) -> JournalEntry:
-        new_id = len(self.entries) + 1
-        saved = JournalEntry(**{**vars_of(entry), "id": new_id, "posted_at": NOW})
-        self.entries[new_id] = saved
-        if saved.reverses_id is not None:
-            original = self.entries[saved.reverses_id]
-            self.entries[saved.reverses_id] = JournalEntry(
-                **{**vars_of(original), "reversed_by_id": new_id}
-            )
+        if entry.reverses_id is not None and any(
+            e.reverses_id == entry.reverses_id for e in self.entries.values()
+        ):
+            raise AlreadyReversed(entry.reverses_id)
+        saved = replace(entry, id=len(self.entries) + 1, posted_at=NOW)
+        self.entries[saved.id] = saved  # type: ignore[index]
         return saved
 
     def get(self, tenant_id: int, entry_id: int) -> JournalEntry | None:
-        entry = self.entries.get(entry_id)
-        return entry if entry and entry.tenant_id == tenant_id else None
-
-
-def vars_of(entry: JournalEntry) -> dict[str, object]:
-    return {name: getattr(entry, name) for name in JournalEntry.__slots__}
-
-
-def entry(*lines: tuple[int, str]) -> JournalEntry:
-    return JournalEntry(
-        TENANT,
-        NOW,
-        "invoice",
-        "inv_1",
-        tuple(Line(i, Money(Decimal(a), Currency.USD)) for i, a in lines),
-    )
+        found = self.entries.get(entry_id)
+        return found if found and found.tenant_id == tenant_id else None
 
 
 @given(strategies.balanced_entry())
@@ -83,18 +65,18 @@ def test_reverse_entry_posts_negated_lines_linked_to_original() -> None:
     original = PostEntry(journal)(entry((1, "10"), (2, "-10")))
     assert original.id is not None
 
-    reversal = ReverseEntry(journal, clock=lambda: NOW)(TENANT, original.id)
+    reversal = ReverseEntry(journal)(TENANT, original.id, occurred_at=NOW)
 
     assert reversal.reverses_id == original.id
+    assert reversal.occurred_at == NOW
     assert [line.amount.amount for line in reversal.lines] == [Decimal("-10"), Decimal("10")]
-    assert journal.entries[original.id].reversed_by_id == reversal.id
 
 
 def test_reverse_entry_refuses_twice_and_unknown_ids() -> None:
     journal = FakeJournal(chart(Currency.USD))
     original = PostEntry(journal)(entry((1, "10"), (2, "-10")))
     assert original.id is not None
-    reverse = ReverseEntry(journal, clock=lambda: NOW)
+    reverse = ReverseEntry(journal)
     reverse(TENANT, original.id)
 
     with pytest.raises(AlreadyReversed):

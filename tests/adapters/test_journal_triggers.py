@@ -1,25 +1,13 @@
 """The database is the last line of defence: these tests bypass the domain
 and the ORM validation entirely and write raw SQL."""
 
-from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 from django.db import IntegrityError, connection, transaction
 
 from tally.adapters.models import Account, JournalEntry, JournalLine, Tenant
-
-NOW = datetime(2026, 1, 1, tzinfo=UTC)
-
-
-@pytest.fixture
-def ledger() -> tuple[Tenant, Account, Account]:
-    tenant = Tenant.objects.create(name="acme")
-    ar = Account.objects.create(tenant=tenant, code="1200", name="AR", type="asset", currency="USD")
-    rev = Account.objects.create(
-        tenant=tenant, code="4000", name="Revenue", type="revenue", currency="USD"
-    )
-    return tenant, ar, rev
+from tests.domain.strategies import NOW
 
 
 def raw_entry(tenant: Tenant, *lines: tuple[Account, str]) -> int:

@@ -1,8 +1,14 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
+from hypothesis import assume
 from hypothesis import strategies as st
 
+from tally.domain.journal import Account, AccountType, JournalEntry, Line
 from tally.domain.money import Currency, Money
+
+TENANT = 1
+NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 currencies = st.sampled_from(list(Currency))
 amounts = st.decimals(
@@ -12,6 +18,7 @@ amounts = st.decimals(
     allow_nan=False,
     allow_infinity=False,
 )
+nonzero_amounts = amounts.filter(lambda d: d != 0)
 
 
 def money(currency: Currency | None = None) -> st.SearchStrategy[Money]:
@@ -19,21 +26,24 @@ def money(currency: Currency | None = None) -> st.SearchStrategy[Money]:
     return st.builds(Money, amounts, cur)
 
 
-from datetime import UTC, datetime  # noqa: E402
-
-from hypothesis import assume  # noqa: E402
-
-from tally.domain.journal import Account, AccountType, JournalEntry, Line  # noqa: E402
-
-TENANT = 1
-nonzero_amounts = amounts.filter(lambda d: d != 0)
-
-
 def chart(currency: Currency, size: int = 6) -> dict[int, Account]:
     return {
         i: Account(i, TENANT, f"{1000 + i}", AccountType.ASSET, currency)
         for i in range(1, size + 1)
     }
+
+
+def entry(
+    *lines: tuple[int, str], tenant_id: int = TENANT, currency: Currency = Currency.USD
+) -> JournalEntry:
+    """Hand-built entry: `entry((account_id, "10"), (other_id, "-10"))`."""
+    return JournalEntry(
+        tenant_id,
+        NOW,
+        "test",
+        "1",
+        tuple(Line(i, Money(Decimal(a), currency)) for i, a in lines),
+    )
 
 
 @st.composite
@@ -49,7 +59,7 @@ def balanced_entry(draw: st.DrawFn, currency: Currency | None = None) -> Journal
         st.lists(st.sampled_from(sorted(accounts)), min_size=len(amounts_), max_size=len(amounts_))
     )
     lines = tuple(Line(i, Money(a, cur)) for i, a in zip(ids, amounts_, strict=True))
-    return JournalEntry(TENANT, datetime(2026, 1, 1, tzinfo=UTC), "test", "1", lines)
+    return JournalEntry(TENANT, NOW, "test", "1", lines)
 
 
 @st.composite

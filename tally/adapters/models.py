@@ -21,7 +21,9 @@ class Tenant(models.Model):
 
 
 class Account(models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="accounts")
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.PROTECT, related_name="accounts", db_index=False
+    )
     code = models.CharField(max_length=32)
     name = models.CharField(max_length=200)
     type = models.CharField(max_length=16, choices=[(t.value, t.value) for t in AccountType])
@@ -35,7 +37,9 @@ class Account(models.Model):
 
 
 class JournalEntry(models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="entries")
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.PROTECT, related_name="entries", db_index=False
+    )
     occurred_at = models.DateTimeField()
     posted_at = models.DateTimeField(auto_now_add=True)
     source_type = models.CharField(max_length=64)
@@ -56,7 +60,7 @@ class JournalEntry(models.Model):
 
 
 class JournalLine(models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="+")
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="+", db_index=False)
     entry = models.ForeignKey(JournalEntry, on_delete=models.PROTECT, related_name="lines")
     account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="lines")
     amount = models.DecimalField(max_digits=18, decimal_places=6)

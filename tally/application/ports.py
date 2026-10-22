@@ -12,7 +12,10 @@ class JournalRepository(Protocol):
         ...
 
     def add(self, entry: JournalEntry) -> JournalEntry:
-        """Persist a validated entry and return it with id and posted_at set."""
+        """Persist a validated entry and return it with id and posted_at set.
+
+        Raises AlreadyReversed when `entry.reverses_id` is already taken.
+        """
         ...
 
     def get(self, tenant_id: int, entry_id: int) -> JournalEntry | None: ...

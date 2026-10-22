@@ -3,7 +3,6 @@ persistence in the repository."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -18,13 +17,11 @@ class EntryNotFound(LookupError):
 
 
 class AlreadyReversed(ValueError):
-    def __init__(self, entry_id: int, reversed_by_id: int) -> None:
-        super().__init__(f"entry {entry_id} was already reversed by entry {reversed_by_id}")
-        self.entry_id, self.reversed_by_id = entry_id, reversed_by_id
+    """Raised by the repository: the one-to-one `reverses` link already exists."""
 
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
+    def __init__(self, entry_id: int) -> None:
+        super().__init__(f"entry {entry_id} was already reversed")
+        self.entry_id = entry_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +38,6 @@ class PostEntry:
 @dataclass(frozen=True, slots=True)
 class ReverseEntry:
     journal: JournalRepository
-    clock: Callable[[], datetime] = _utcnow
 
     def __call__(
         self, tenant_id: int, entry_id: int, occurred_at: datetime | None = None
@@ -49,7 +45,5 @@ class ReverseEntry:
         original = self.journal.get(tenant_id, entry_id)
         if original is None:
             raise EntryNotFound(entry_id)
-        if original.reversed_by_id is not None:
-            raise AlreadyReversed(entry_id, original.reversed_by_id)
-        reversal = reversal_of(original, occurred_at or self.clock())
+        reversal = reversal_of(original, occurred_at or datetime.now(UTC))
         return PostEntry(self.journal)(reversal)

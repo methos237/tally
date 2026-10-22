@@ -1,35 +1,15 @@
-from datetime import UTC, datetime
-from decimal import Decimal
-
 import pytest
 
 from tally.adapters.models import Account, JournalLine, Tenant
 from tally.adapters.repositories import DjangoJournalRepository
-from tally.application.journal import PostEntry, ReverseEntry
-from tally.domain.journal import JournalEntry, Line, UnknownAccount
-from tally.domain.money import Currency, Money
-
-NOW = datetime(2026, 1, 1, tzinfo=UTC)
-
-
-@pytest.fixture
-def ledger() -> tuple[Tenant, Account, Account]:
-    tenant = Tenant.objects.create(name="acme")
-    ar = Account.objects.create(tenant=tenant, code="1200", name="AR", type="asset", currency="USD")
-    rev = Account.objects.create(
-        tenant=tenant, code="4000", name="Revenue", type="revenue", currency="USD"
-    )
-    return tenant, ar, rev
+from tally.application.journal import AlreadyReversed, PostEntry, ReverseEntry
+from tally.domain.journal import JournalEntry, UnknownAccount
+from tests.adapters.conftest import fold_from_journal
+from tests.domain.strategies import NOW, entry
 
 
-def entry(tenant: Tenant, *lines: tuple[Account, str]) -> JournalEntry:
-    return JournalEntry(
-        tenant.id,
-        NOW,
-        "invoice",
-        "inv_1",
-        tuple(Line(a.id, Money(Decimal(amt), Currency.USD)) for a, amt in lines),
-    )
+def ledger_entry(tenant: Tenant, *lines: tuple[Account, str]) -> JournalEntry:
+    return entry(*((a.id, amt) for a, amt in lines), tenant_id=tenant.id)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -37,16 +17,28 @@ def test_post_and_reverse_through_the_database(ledger: tuple[Tenant, Account, Ac
     tenant, ar, rev = ledger
     repo = DjangoJournalRepository()
 
-    posted = PostEntry(repo)(entry(tenant, (ar, "149.00"), (rev, "-149.00")))
+    posted = PostEntry(repo)(ledger_entry(tenant, (ar, "149.00"), (rev, "-149.00")))
     assert posted.id is not None and posted.posted_at is not None
     assert repo.get(tenant.id, posted.id) == posted
 
-    reversal = ReverseEntry(repo, clock=lambda: NOW)(tenant.id, posted.id)
+    reversal = ReverseEntry(repo)(tenant.id, posted.id, occurred_at=NOW)
     assert reversal.reverses_id == posted.id
-    fetched = repo.get(tenant.id, posted.id)
-    assert fetched is not None and fetched.reversed_by_id == reversal.id
     assert JournalLine.objects.filter(tenant=tenant).count() == 4
-    assert sum(line.amount for line in JournalLine.objects.filter(tenant=tenant)) == 0
+    assert sum(fold_from_journal(tenant).values()) == 0
+
+
+@pytest.mark.django_db(transaction=True)
+def test_reversing_twice_is_refused_by_the_one_to_one_link(
+    ledger: tuple[Tenant, Account, Account],
+) -> None:
+    tenant, ar, rev = ledger
+    repo = DjangoJournalRepository()
+    posted = PostEntry(repo)(ledger_entry(tenant, (ar, "1"), (rev, "-1")))
+    assert posted.id is not None
+    ReverseEntry(repo)(tenant.id, posted.id)
+    with pytest.raises(AlreadyReversed):
+        ReverseEntry(repo)(tenant.id, posted.id)
+    assert JournalLine.objects.filter(tenant=tenant).count() == 4
 
 
 @pytest.mark.django_db
@@ -57,13 +49,13 @@ def test_other_tenants_accounts_are_invisible(ledger: tuple[Tenant, Account, Acc
         tenant=other, code="4000", name="Revenue", type="revenue", currency="USD"
     )
     with pytest.raises(UnknownAccount):
-        PostEntry(DjangoJournalRepository())(entry(tenant, (ar, "1"), (foreign, "-1")))
+        PostEntry(DjangoJournalRepository())(ledger_entry(tenant, (ar, "1"), (foreign, "-1")))
 
 
 @pytest.mark.django_db
 def test_get_filters_by_tenant(ledger: tuple[Tenant, Account, Account]) -> None:
     tenant, ar, rev = ledger
     repo = DjangoJournalRepository()
-    posted = PostEntry(repo)(entry(tenant, (ar, "1"), (rev, "-1")))
+    posted = PostEntry(repo)(ledger_entry(tenant, (ar, "1"), (rev, "-1")))
     assert posted.id is not None
     assert repo.get(tenant.id + 1, posted.id) is None

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -7,6 +7,7 @@ from hypothesis import given
 from tally.domain.journal import (
     Account,
     AccountType,
+    AmountOutOfRange,
     JournalEntry,
     Line,
     SingleLineEntry,
@@ -18,20 +19,9 @@ from tally.domain.journal import (
 )
 from tally.domain.money import Currency, CurrencyMismatch, Money
 from tests.domain import strategies
-from tests.domain.strategies import TENANT, chart
+from tests.domain.strategies import NOW, TENANT, chart, entry
 
 USD = Currency.USD
-NOW = datetime(2026, 1, 1, tzinfo=UTC)
-
-
-def entry(*lines: tuple[int, str], currency: Currency = USD) -> JournalEntry:
-    return JournalEntry(
-        TENANT,
-        NOW,
-        "test",
-        "1",
-        tuple(Line(i, Money(Decimal(a), currency)) for i, a in lines),
-    )
 
 
 @given(strategies.balanced_entry())
@@ -61,6 +51,13 @@ def test_zero_line_is_rejected() -> None:
     assert exc.value.index == 1
 
 
+def test_line_that_does_not_fit_numeric_18_6_is_rejected() -> None:
+    post(entry((1, "999999999999.999999"), (2, "-999999999999.999999")), chart(USD))
+    with pytest.raises(AmountOutOfRange) as exc:
+        post(entry((1, "1e12"), (2, "-1e12")), chart(USD))
+    assert exc.value.index == 0
+
+
 def test_unknown_or_foreign_tenant_account_is_rejected() -> None:
     accounts = chart(USD)
     accounts[2] = Account(2, TENANT + 1, "1002", AccountType.ASSET, USD)
@@ -88,7 +85,7 @@ def test_multi_currency_entry_balances_per_currency() -> None:
     )
     e = JournalEntry(TENANT, NOW, "test", "1", lines)
     assert post(e, accounts) is e
-    bad = JournalEntry(TENANT, NOW, "test", "1", lines[:3])
+    bad = replace(e, lines=lines[:3])
     with pytest.raises(UnbalancedEntry) as exc:
         post(bad, accounts)
     assert exc.value.currency is Currency.EUR
@@ -96,16 +93,11 @@ def test_multi_currency_entry_balances_per_currency() -> None:
 
 @given(strategies.balanced_entry())
 def test_reversal_negates_every_line_and_links_back(e: JournalEntry) -> None:
-    original = _with_id(e, 42)
-    reversed_ = reversal_of(original, NOW)
+    reversed_ = reversal_of(replace(e, id=42), NOW)
     assert reversed_.reverses_id == 42
     assert reversed_.source_type == "reversal"
     assert [line.amount for line in reversed_.lines] == [-line.amount for line in e.lines]
     assert post(reversed_, chart(e.lines[0].amount.currency)) is reversed_
-
-
-def _with_id(e: JournalEntry, id_: int) -> JournalEntry:
-    return JournalEntry(e.tenant_id, e.occurred_at, e.source_type, e.source_id, e.lines, id=id_)
 
 
 def test_unsaved_entry_cannot_be_reversed() -> None:

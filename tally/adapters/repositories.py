@@ -1,11 +1,11 @@
 """Django ORM implementation of the application ports."""
 
 from collections.abc import Iterable, Mapping
-from decimal import Decimal
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from tally.adapters import models, projections
+from tally.application.journal import AlreadyReversed
 from tally.domain.journal import Account, AccountType, JournalEntry, Line
 from tally.domain.money import Currency, Money
 
@@ -27,14 +27,12 @@ def to_domain_entry(row: models.JournalEntry, lines: Iterable[models.JournalLine
         source_type=row.source_type,
         source_id=row.source_id,
         lines=tuple(
-            Line(line.account_id, Money(Decimal(line.amount), Currency(line.currency)))
-            for line in lines
+            Line(line.account_id, Money(line.amount, Currency(line.currency))) for line in lines
         ),
         id=row.id,
         posted_at=row.posted_at,
         idempotency_key=row.idempotency_key,
         reverses_id=row.reverses_id,
-        reversed_by_id=getattr(row, "reversed_by", None) and row.reversed_by.id,
     )
 
 
@@ -44,35 +42,35 @@ class DjangoJournalRepository:
         return {row.id: to_domain_account(row) for row in rows}
 
     def add(self, entry: JournalEntry) -> JournalEntry:
-        with transaction.atomic():
-            row = models.JournalEntry.objects.create(
-                tenant_id=entry.tenant_id,
-                occurred_at=entry.occurred_at,
-                source_type=entry.source_type,
-                source_id=entry.source_id,
-                idempotency_key=entry.idempotency_key,
-                reverses_id=entry.reverses_id,
-            )
-            lines = models.JournalLine.objects.bulk_create(
-                models.JournalLine(
+        try:
+            with transaction.atomic():
+                row = models.JournalEntry.objects.create(
                     tenant_id=entry.tenant_id,
-                    entry=row,
-                    account_id=line.account_id,
-                    amount=line.amount.amount,
-                    currency=line.amount.currency.value,
+                    occurred_at=entry.occurred_at,
+                    source_type=entry.source_type,
+                    source_id=entry.source_id,
+                    idempotency_key=entry.idempotency_key,
+                    reverses_id=entry.reverses_id,
                 )
-                for line in entry.lines
-            )
-            projections.apply(row, lines)
+                lines = models.JournalLine.objects.bulk_create(
+                    models.JournalLine(
+                        tenant_id=entry.tenant_id,
+                        entry=row,
+                        account_id=line.account_id,
+                        amount=line.amount.amount,
+                        currency=line.amount.currency.value,
+                    )
+                    for line in entry.lines
+                )
+                projections.apply(row)
+        except IntegrityError as exc:
+            if entry.reverses_id is not None and "reverses_id" in str(exc):
+                raise AlreadyReversed(entry.reverses_id) from exc
+            raise
         return to_domain_entry(row, lines)
 
     def get(self, tenant_id: int, entry_id: int) -> JournalEntry | None:
-        row = (
-            models.JournalEntry.objects.filter(tenant_id=tenant_id, id=entry_id)
-            .select_related("reversed_by")
-            .prefetch_related("lines")
-            .first()
-        )
+        row = models.JournalEntry.objects.filter(tenant_id=tenant_id, id=entry_id).first()
         if row is None:
             return None
         return to_domain_entry(row, row.lines.order_by("id"))
