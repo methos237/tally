@@ -1,3 +1,3 @@
 from .base import *  # noqa: F403
 
-PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+# Argon2 stays on in tests: the hasher is part of what is under test and keys are few.

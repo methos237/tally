@@ -90,3 +90,53 @@ class AccountBalance(models.Model):
 
     class Meta:
         db_table = "account_balances"
+
+
+class ApiKey(models.Model):
+    """A tenant credential. The secret is hashed with Argon2; only the prefix is stored
+    in the clear so a presented key can be looked up before the hash is checked."""
+
+    PREFIX = "tk_"
+    PREFIX_LEN = 8
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="api_keys")
+    name = models.CharField(max_length=100)
+    prefix = models.CharField(max_length=PREFIX_LEN, unique=True)
+    key_hash = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "api_keys"
+
+    @classmethod
+    def issue(cls, tenant: Tenant, name: str) -> tuple["ApiKey", str]:
+        """Create a key and return (row, plaintext). The plaintext is shown exactly once."""
+        from secrets import token_urlsafe
+
+        from django.contrib.auth.hashers import make_password
+
+        secret = token_urlsafe(32)
+        plaintext = f"{cls.PREFIX}{secret}"
+        row = cls.objects.create(
+            tenant=tenant,
+            name=name,
+            prefix=secret[: cls.PREFIX_LEN],
+            key_hash=make_password(plaintext, hasher="argon2"),
+        )
+        return row, plaintext
+
+    @classmethod
+    def authenticate(cls, plaintext: str) -> "ApiKey | None":
+        """The live key matching `plaintext`, or None. Constant work for bad prefixes."""
+        from django.contrib.auth.hashers import check_password
+
+        if not plaintext.startswith(cls.PREFIX):
+            return None
+        prefix = plaintext[len(cls.PREFIX) :][: cls.PREFIX_LEN]
+        live = cls.objects.filter(prefix=prefix, revoked_at__isnull=True)
+        row = live.select_related("tenant").first()
+        # ponytail: one Argon2 verify per request; cache verified keys in Redis if p95 matters
+        if row is None or not check_password(plaintext, row.key_hash):
+            return None
+        return row

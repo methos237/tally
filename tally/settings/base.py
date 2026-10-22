@@ -50,7 +50,13 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
+    "DEFAULT_AUTHENTICATION_CLASSES": ["tally.api.auth.ApiKeyAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "EXCEPTION_HANDLER": "tally.api.problems.handler",
+    "UNAUTHENTICATED_USER": None,
 }
+PASSWORD_HASHERS = ["django.contrib.auth.hashers.Argon2PasswordHasher"]
 SPECTACULAR_SETTINGS = {"TITLE": "Tally API", "VERSION": "0.1.0"}
 
 TIME_ZONE = "UTC"
