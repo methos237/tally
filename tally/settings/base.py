@@ -62,3 +62,7 @@ STRIPE_API_BASE = os.environ.get("STRIPE_API_BASE", "")  # set to stripe-mock in
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://localhost:9000")
 
 LOGGING_CONFIG = None  # structlog configured in tally.logging
+
+from tally.logging import configure as _configure_logging  # noqa: E402
+
+_configure_logging(json=True)
