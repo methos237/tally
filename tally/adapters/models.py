@@ -16,6 +16,9 @@ CURRENCY_CHOICES = [(c.value, c.value) for c in Currency]
 class Tenant(models.Model):
     name = models.CharField(max_length=200, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    rate_limit_per_minute = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Overrides RATE_LIMIT_PER_MINUTE for this tenant's keys"
+    )
 
     class Meta:
         db_table = "tenants"

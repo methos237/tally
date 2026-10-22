@@ -24,6 +24,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "tally.api.throttle.RateLimitHeadersMiddleware",
 ]
 
 ROOT_URLCONF = "tally.urls"
@@ -64,9 +65,11 @@ REST_FRAMEWORK = {
     "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
     "DEFAULT_AUTHENTICATION_CLASSES": ["tally.api.auth.ApiKeyAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_THROTTLE_CLASSES": ["tally.api.throttle.ApiKeyTokenBucket"],
     "EXCEPTION_HANDLER": "tally.api.problems.handler",
     "UNAUTHENTICATED_USER": None,
 }
+RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "100"))
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.Argon2PasswordHasher"]
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tally API",

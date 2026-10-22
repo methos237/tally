@@ -27,7 +27,8 @@ THREADS, PER_THREAD = 20, 10
 
 @pytest.mark.django_db(transaction=True)
 def test_twenty_threads_on_two_accounts_leave_exact_balances(api_key: str, ledger: Ledger) -> None:
-    _, ar, rev = ledger
+    tenant, ar, rev = ledger
+    Tenant.objects.filter(id=tenant.id).update(rate_limit_per_minute=10_000)  # not under test here
     failures: list[object] = []
     barrier = threading.Barrier(THREADS)
 
