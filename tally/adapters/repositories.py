@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from django.db import transaction
 
-from tally.adapters import models
+from tally.adapters import models, projections
 from tally.domain.journal import Account, AccountType, JournalEntry, Line
 from tally.domain.money import Currency, Money
 
@@ -63,6 +63,7 @@ class DjangoJournalRepository:
                 )
                 for line in entry.lines
             )
+            projections.apply(row, lines)
         return to_domain_entry(row, lines)
 
     def get(self, tenant_id: int, entry_id: int) -> JournalEntry | None:

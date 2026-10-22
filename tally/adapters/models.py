@@ -68,3 +68,21 @@ class JournalLine(models.Model):
         constraints = [
             models.CheckConstraint(condition=~models.Q(amount=0), name="ck_line_amount_nonzero")
         ]
+
+
+class AccountBalance(models.Model):
+    """Projection: running balance per account, folded from journal_lines.
+
+    Updated incrementally on every post; rebuilt from scratch by
+    `manage.py replay_balances`. Never the source of truth.
+    """
+
+    account = models.OneToOneField(
+        Account, primary_key=True, on_delete=models.PROTECT, related_name="balance"
+    )
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="+")
+    balance = models.DecimalField(max_digits=18, decimal_places=6)
+    as_of = models.DateTimeField(help_text="posted_at of the last entry folded in")
+
+    class Meta:
+        db_table = "account_balances"
