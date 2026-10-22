@@ -59,6 +59,6 @@ USE_TZ = True
 STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_API_BASE = os.environ.get("STRIPE_API_BASE", "")  # set to stripe-mock in compose and CI
-MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://localhost:9000")
+S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://localhost:9000")
 
 LOGGING_CONFIG = None  # structlog configured in tally.logging
