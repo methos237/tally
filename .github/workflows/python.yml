@@ -1,0 +1,41 @@
+name: python
+
+on:
+  push:
+    branches: [master]
+    paths: ["tally/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/python.yml"]
+  pull_request:
+    paths: ["tally/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/python.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: tally
+          POSTGRES_USER: tally
+          POSTGRES_PASSWORD: tally
+        ports: ["5435:5432"]
+        options: --health-cmd "pg_isready -U tally" --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6380:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+      stripe-mock:
+        image: stripe/stripe-mock:latest
+        ports: ["12111:12111"]
+    env:
+      STRIPE_API_BASE: http://localhost:12111
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy tally/domain tally/api
+      - run: uv run lint-imports
+      - run: uv run pytest -m "not live"
