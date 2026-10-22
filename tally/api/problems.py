@@ -35,6 +35,10 @@ class NotFound(Problem):
     status, title, type = status.HTTP_404_NOT_FOUND, "Not Found", "not-found"
 
 
+class Conflict(Problem):
+    status, title, type = status.HTTP_409_CONFLICT, "Conflict", "conflict"
+
+
 class Unprocessable(Problem):
     status, title, type = status.HTTP_422_UNPROCESSABLE_ENTITY, "Unprocessable", "unprocessable"
 

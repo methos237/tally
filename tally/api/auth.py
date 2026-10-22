@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import cast
 
+from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
 from rest_framework.request import Request
 
@@ -36,3 +37,13 @@ class ApiKeyAuthentication(authentication.BaseAuthentication):
 def principal(request: Request) -> Principal:
     """The authenticated tenant. Views only run after ApiKeyAuthentication succeeded."""
     return cast(Principal, request.user)
+
+
+class ApiKeyScheme(OpenApiAuthenticationExtension):  # type: ignore[no-untyped-call]
+    """Tells drf-spectacular how X-Api-Key appears in the OpenAPI document."""
+
+    target_class = "tally.api.auth.ApiKeyAuthentication"
+    name = "ApiKeyAuth"
+
+    def get_security_definition(self, auto_schema: object) -> dict[str, str]:
+        return {"type": "apiKey", "in": "header", "name": HEADER}

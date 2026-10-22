@@ -27,6 +27,13 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "tally.urls"
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "APP_DIRS": True,
+        "OPTIONS": {"context_processors": ["django.template.context_processors.request"]},
+    }
+]
 WSGI_APPLICATION = "tally.wsgi.application"
 
 DATABASES = {
@@ -57,7 +64,14 @@ REST_FRAMEWORK = {
     "UNAUTHENTICATED_USER": None,
 }
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.Argon2PasswordHasher"]
-SPECTACULAR_SETTINGS = {"TITLE": "Tally API", "VERSION": "0.1.0"}
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Tally API",
+    "DESCRIPTION": "Double-entry ledger and billing. Writes need X-Api-Key and Idempotency-Key.",
+    "VERSION": "0.1.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
+    "SERVE_AUTHENTICATION": [],
+}
 
 TIME_ZONE = "UTC"
 USE_TZ = True
