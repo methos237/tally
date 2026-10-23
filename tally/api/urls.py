@@ -1,7 +1,22 @@
-from django.urls import path
+from datetime import date
+
+from django.urls import path, register_converter
 from drf_spectacular.views import SpectacularJSONAPIView, SpectacularRedocView
 
-from tally.api import reconciliation, views, webhooks
+from tally.api import internal, reconciliation, views, webhooks
+
+
+class DateConverter:
+    regex = r"\d{4}-\d{2}-\d{2}"
+
+    def to_python(self, value: str) -> date:
+        return date.fromisoformat(value)
+
+    def to_url(self, value: date) -> str:
+        return value.isoformat()
+
+
+register_converter(DateConverter, "date")
 
 urlpatterns = [
     path("health", views.health, name="health"),
@@ -46,4 +61,7 @@ urlpatterns = [
         name="reconciliation-exception-resolve",
     ),
     path("webhooks/stripe", webhooks.stripe_webhook, name="stripe-webhook"),
+    path("internal/settlement/<date:day>", internal.settlement, name="internal-settlement"),
+    path("internal/reports/<date:day>", internal.run_report, name="internal-report"),
+    path("internal/reports/<date:day>/ready", internal.report_ready, name="internal-report-ready"),
 ]

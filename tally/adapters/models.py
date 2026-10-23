@@ -384,3 +384,14 @@ class ReconciliationException(models.Model):
     class Meta:
         db_table = "reconciliation_exceptions"
         ordering = ["id"]
+
+
+class SettlementMarker(models.Model):
+    """A day whose entries are final. The nightly report's sensor waits for this row;
+    Beat writes it shortly after midnight, an operator can write it by hand."""
+
+    day = models.DateField(unique=True)
+    settled_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "settlement_markers"

@@ -6,24 +6,12 @@ from datetime import UTC, date, datetime
 from io import StringIO
 
 import pytest
-from botocore.exceptions import ClientError
-from django.conf import settings
 from django.core.management import call_command
 
 from tally.adapters import billing, reconciliation, reports
 from tally.adapters.models import OutboxMessage, Subscription, Tenant, WebhookEndpoint
 
 DAY = date(2026, 2, 1)
-
-
-@pytest.fixture(scope="module")
-def bucket() -> str:
-    client = reports.s3()
-    try:
-        client.head_bucket(Bucket=settings.S3_BUCKET)
-    except ClientError:
-        client.create_bucket(Bucket=settings.S3_BUCKET)
-    return str(settings.S3_BUCKET)
 
 
 @pytest.fixture

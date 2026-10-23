@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
+from botocore.exceptions import ClientError
+from django.conf import settings as django_settings
 from hypothesis import settings
 
 from tally.adapters.models import (
@@ -84,3 +86,16 @@ def subscription(tenant: Tenant) -> Subscription:
     return Subscription.objects.create(
         tenant=tenant, customer=customer, plan=plan, started_at=datetime(2026, 1, 31, tzinfo=UTC)
     )
+
+
+@pytest.fixture(scope="session")
+def bucket() -> str:
+    """The reports bucket on the compose (or CI) RustFS, created on first use."""
+    from tally.adapters import reports
+
+    client = reports.s3()
+    try:
+        client.head_bucket(Bucket=django_settings.S3_BUCKET)
+    except ClientError:
+        client.create_bucket(Bucket=django_settings.S3_BUCKET)
+    return str(django_settings.S3_BUCKET)
