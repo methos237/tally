@@ -5,8 +5,6 @@ documented recipe (t=<ts>,v1=HMAC-SHA256(secret, f"{ts}.{body}")), which is the 
 recipe tenants get for outbound webhooks.
 """
 
-import hashlib
-import hmac
 import json
 import time
 from decimal import Decimal
@@ -15,9 +13,9 @@ from typing import Any
 import pytest
 from django.test import Client
 
-from tally.adapters import billing
+from tally.adapters import billing, outbox
 from tally.adapters.models import Invoice, JournalEntry, StripeEvent, Subscription
-from tests.adapters.test_billing import NOW, balance
+from tests.conftest import NOW, balance
 
 SECRET = "whsec_test_secret"
 URL = "/webhooks/stripe"
@@ -37,9 +35,7 @@ def event(type_: str, intent_id: str, event_id: str = "evt_1") -> bytes:
 
 
 def sign(payload: bytes, secret: str = SECRET, at: int | None = None) -> str:
-    ts = at or int(time.time())
-    digest = hmac.new(secret.encode(), f"{ts}.".encode() + payload, hashlib.sha256).hexdigest()
-    return f"t={ts},v1={digest}"
+    return outbox.sign(secret, payload, at or int(time.time()))  # same recipe both directions
 
 
 def deliver(client: Client, payload: bytes, signature: str) -> Any:
@@ -118,5 +114,5 @@ def test_an_intent_we_did_not_create_is_acknowledged_and_ignored(open_invoice: I
 
 
 @pytest.mark.django_db
-def test_get_is_not_allowed(settings: Any) -> None:
+def test_get_is_not_allowed() -> None:
     assert Client().get(URL).status_code == 405

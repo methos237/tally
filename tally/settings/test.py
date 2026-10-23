@@ -7,7 +7,8 @@ from .base import *  # noqa: F403
 PASSWORD_HASHERS = ["tally.settings.test.FastArgon2"]
 CELERY_TASK_ALWAYS_EAGER = True
 # Tests never reach Stripe: stripe-mock from compose or the CI service container.
-STRIPE_API_BASE = os.environ.get("STRIPE_API_BASE", "http://localhost:12111")  # noqa: F405
+STRIPE_API_BASE = os.environ.get("STRIPE_API_BASE", "http://localhost:12111")
+STRIPE_TEST_SECRET_KEY = "sk_test_stripemock"
 
 # Separate Redis database so test flushes never touch dev buckets.
 TEST_REDIS_URL = REDIS_URL.rsplit("/", 1)[0] + "/1"  # noqa: F405

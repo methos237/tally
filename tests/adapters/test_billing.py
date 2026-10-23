@@ -6,14 +6,7 @@ from django.db import IntegrityError
 
 from tally.adapters import billing
 from tally.adapters.models import Account, Invoice, JournalEntry, Subscription
-from tests.conftest import fold_from_journal
-
-NOW = datetime(2026, 2, 1, 9, tzinfo=UTC)
-
-
-def balance(tenant_id: int, code: str) -> Decimal:
-    account = Account.objects.get(tenant_id=tenant_id, code=code)
-    return fold_from_journal(account.tenant).get(account.id, Decimal(0))
+from tests.conftest import NOW, balance
 
 
 @pytest.mark.django_db
@@ -27,12 +20,10 @@ def test_issue_invoice_posts_receivable_against_revenue_and_advances_the_period(
         datetime(2026, 1, 31, tzinfo=UTC),
         datetime(2026, 2, 28, tzinfo=UTC),
     )
-    assert invoice.lines.count() == 1
-    assert invoice.issue_entry is not None
-    assert (invoice.issue_entry.source_type, invoice.issue_entry.source_id) == (
-        "invoice",
-        str(invoice.id),
-    )
+    assert invoice.description == "Pro 2026-01-31 to 2026-02-28"
+    issued = invoice.entry("invoice")
+    assert issued is not None and issued.source_id == str(invoice.id)
+    assert invoice.entry("payment") is None
     assert balance(subscription.tenant_id, "1200") == Decimal("49")
     assert balance(subscription.tenant_id, "4000") == Decimal("-49")
     subscription.refresh_from_db()
@@ -64,6 +55,7 @@ def test_mark_paid_posts_cash_against_receivable_once_and_reactivates(
     assert paid.status == again.status == "paid"
     assert paid.paid_at == NOW
     assert JournalEntry.objects.filter(source_type="payment").count() == 1
+    assert paid.entry("payment") is not None
     assert balance(subscription.tenant_id, "1200") == Decimal(0)
     assert balance(subscription.tenant_id, "1000") == Decimal("49")
     subscription.refresh_from_db()

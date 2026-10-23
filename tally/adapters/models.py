@@ -7,9 +7,10 @@ the triggers that enforce it and the deferred balancing check.
 from secrets import token_urlsafe
 
 from django.contrib.auth.hashers import check_password, make_password
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 
-from tally.domain.billing import Event, Interval, InvoiceStatus, SubscriptionStatus, transition
+from tally.domain.billing import Interval, InvoiceStatus, SubscriptionStatus
 from tally.domain.journal import AccountType
 from tally.domain.money import Currency
 
@@ -205,23 +206,21 @@ class Subscription(models.Model):
     )
     started_at = models.DateTimeField()
     billed_through = models.DateTimeField(null=True, blank=True)
-    canceled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "subscriptions"
         indexes = [models.Index(fields=["status", "billed_through"], name="ix_subs_due")]
 
-    def apply(self, event: Event) -> None:
-        """Advance the state machine; raises InvalidTransition for anything not in the table."""
-        self.status = transition(SubscriptionStatus(self.status), event).value
-
 
 class Invoice(models.Model):
+    """One billing period of one subscription. Its journal entries are found through the
+    journal's own (source_type, source_id) link, so the ledger stays the source of truth."""
+
     tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="invoices")
     subscription = models.ForeignKey(
         Subscription, on_delete=models.PROTECT, related_name="invoices"
     )
-    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="invoices")
+    description = models.CharField(max_length=200)
     period_start = models.DateTimeField()
     period_end = models.DateTimeField()
     amount = models.DecimalField(max_digits=18, decimal_places=6)
@@ -233,14 +232,6 @@ class Invoice(models.Model):
     )
     issued_at = models.DateTimeField()
     paid_at = models.DateTimeField(null=True, blank=True)
-    # Nullable only because the entry's source_id is the invoice id: the row is created,
-    # the entry posted, the link set, all in one transaction. Never observed null.
-    issue_entry = models.OneToOneField(
-        JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
-    )
-    payment_entry = models.OneToOneField(
-        JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
-    )
     stripe_payment_intent_id = models.CharField(max_length=64, null=True, blank=True, unique=True)
 
     class Meta:
@@ -251,15 +242,11 @@ class Invoice(models.Model):
             )
         ]
 
-
-class InvoiceLine(models.Model):
-    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="lines")
-    description = models.CharField(max_length=200)
-    amount = models.DecimalField(max_digits=18, decimal_places=6)
-    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
-
-    class Meta:
-        db_table = "invoice_lines"
+    def entry(self, source_type: str) -> "JournalEntry | None":
+        """The `invoice` (issue) or `payment` entry posted for this invoice."""
+        return JournalEntry.objects.filter(
+            tenant_id=self.tenant_id, source_type=source_type, source_id=str(self.id)
+        ).first()
 
 
 class StripeEvent(models.Model):
@@ -305,7 +292,7 @@ class OutboxMessage(models.Model):
     tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="+")
     endpoint = models.ForeignKey(WebhookEndpoint, on_delete=models.PROTECT, related_name="outbox")
     event_type = models.CharField(max_length=64)
-    payload = models.JSONField()
+    payload = models.JSONField(encoder=DjangoJSONEncoder)  # Decimal and datetime become strings
     created_at = models.DateTimeField(auto_now_add=True)
     attempts = models.PositiveSmallIntegerField(default=0)
     next_attempt_at = models.DateTimeField()
@@ -316,4 +303,11 @@ class OutboxMessage(models.Model):
 
     class Meta:
         db_table = "webhook_outbox"
-        indexes = [models.Index(fields=["next_attempt_at"], name="ix_outbox_due")]
+        indexes = [
+            # Partial: only the rows the 10 s sweep can pick up, not the delivered history.
+            models.Index(
+                fields=["next_attempt_at"],
+                name="ix_outbox_due",
+                condition=models.Q(delivered_at__isnull=True, dead_at__isnull=True),
+            )
+        ]

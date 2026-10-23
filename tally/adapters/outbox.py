@@ -1,7 +1,7 @@
 """Outbound webhooks: outbox rows written in the business transaction, delivered by a
 Beat sweep with HMAC signature and a fixed backoff, dead-lettered after five failures.
 
-Signature recipe (the one integrators verify, same as Stripe's):
+Signature recipe (Stripe's, so any Stripe-compatible verifier accepts it):
     X-Tally-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, f"{t}.{body}")>
 Reject if |now - t| > 300 s or the digest differs.
 """
@@ -24,38 +24,26 @@ BACKOFF = [timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=30), ti
 TIMEOUT_SECONDS = 10
 
 
-def publish(tenant_id: int, event_type: str, data: dict[str, Any]) -> list[OutboxMessage]:
+def publish(tenant_id: int, event_type: str, data: dict[str, Any]) -> None:
     """Queue `event_type` for every enabled endpoint of the tenant. Call inside the
     transaction that produces the event so the two commit or roll back together."""
-    payload = json.loads(json.dumps(data, cls=DjangoJSONEncoder))  # Decimal/datetime -> str
-    return OutboxMessage.objects.bulk_create(
+    endpoints = WebhookEndpoint.objects.filter(tenant_id=tenant_id, disabled_at__isnull=True)
+    now = timezone.now()
+    OutboxMessage.objects.bulk_create(
         OutboxMessage(
             tenant_id=tenant_id,
             endpoint=endpoint,
             event_type=event_type,
-            payload=payload,
-            next_attempt_at=timezone.now(),
+            payload=data,
+            next_attempt_at=now,
         )
-        for endpoint in WebhookEndpoint.objects.filter(
-            tenant_id=tenant_id, disabled_at__isnull=True
-        )
+        for endpoint in endpoints
     )
 
 
 def sign(secret: str, body: bytes, at: int) -> str:
     digest = hmac.new(secret.encode(), f"{at}.".encode() + body, hashlib.sha256).hexdigest()
     return f"t={at},v1={digest}"
-
-
-def verify(
-    secret: str, body: bytes, header: str, now: int | None = None, tolerance: int = 300
-) -> bool:
-    """The receiver side of the recipe; tests use it, integrators copy it."""
-    parts = dict(part.split("=", 1) for part in header.split(","))
-    at = int(parts["t"])
-    if abs((now or int(time.time())) - at) > tolerance:
-        return False
-    return hmac.compare_digest(sign(secret, body, at), header)
 
 
 def body_of(message: OutboxMessage) -> bytes:
@@ -92,7 +80,7 @@ def attempt(message: OutboxMessage) -> bool:
         message.delivered_at = now
     except error.HTTPError as exc:
         message.last_status, message.last_error = exc.code, exc.reason
-    except (error.URLError, TimeoutError, OSError) as exc:
+    except OSError as exc:  # URLError, timeout, refused connection
         message.last_status, message.last_error = None, str(exc)
     if message.delivered_at is None:
         if message.attempts >= OutboxMessage.MAX_ATTEMPTS:

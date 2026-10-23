@@ -23,7 +23,6 @@ class SubscriptionStatus(StrEnum):
 class InvoiceStatus(StrEnum):
     OPEN = "open"
     PAID = "paid"
-    VOID = "void"
 
 
 class Interval(StrEnum):
@@ -44,20 +43,21 @@ TRANSITIONS: dict[tuple[SubscriptionStatus, Event], SubscriptionStatus] = {
     (SubscriptionStatus.PAST_DUE, Event.PAYMENT_SUCCEEDED): SubscriptionStatus.ACTIVE,
     (SubscriptionStatus.PAST_DUE, Event.PAYMENT_FAILED): SubscriptionStatus.PAST_DUE,
     (SubscriptionStatus.PAST_DUE, Event.CANCEL): SubscriptionStatus.CANCELED,
+    # Money on a canceled subscription is still booked by the caller; the status stays put.
+    (SubscriptionStatus.CANCELED, Event.PAYMENT_SUCCEEDED): SubscriptionStatus.CANCELED,
+    (SubscriptionStatus.CANCELED, Event.PAYMENT_FAILED): SubscriptionStatus.CANCELED,
 }
 
 
 class InvalidTransition(ValueError):
-    def __init__(self, status: SubscriptionStatus, event: Event) -> None:
-        super().__init__(f"a {status} subscription cannot take {event}")
-        self.status, self.event = status, event
+    pass
 
 
 def transition(status: SubscriptionStatus, event: Event) -> SubscriptionStatus:
     try:
         return TRANSITIONS[(status, event)]
     except KeyError:
-        raise InvalidTransition(status, event) from None
+        raise InvalidTransition(f"a {status} subscription cannot take {event}") from None
 
 
 def add_interval(start: datetime, interval: Interval) -> datetime:

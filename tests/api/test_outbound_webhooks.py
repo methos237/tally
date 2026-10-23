@@ -9,13 +9,23 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 import pytest
+import stripe
 from freezegun import freeze_time
 
 from tally.adapters import billing, outbox
 from tally.adapters.models import OutboxMessage, Subscription, WebhookEndpoint
 from tally.adapters.tasks import deliver_due_webhooks
-from tests.adapters.test_billing import NOW
 from tests.api.conftest import Idem
+from tests.conftest import NOW
+
+
+def verify(secret: str, body: bytes, header: str) -> bool:
+    """Stripe's own verifier accepts our header: the recipe is theirs."""
+    try:
+        stripe.WebhookSignature.verify_header(body, header, secret, tolerance=300)
+    except stripe.SignatureVerificationError:
+        return False
+    return True
 
 
 class Receiver:
@@ -71,9 +81,9 @@ def test_issuing_an_invoice_queues_a_signed_delivery_that_verifies(
     assert deliver_due_webhooks() == 1
 
     headers, body = receiver.requests[0]
-    assert outbox.verify(endpoint.secret, body, headers["X-Tally-Signature"])
-    assert not outbox.verify("whsec_wrong", body, headers["X-Tally-Signature"])
-    assert not outbox.verify(endpoint.secret, body + b" ", headers["X-Tally-Signature"])
+    assert verify(endpoint.secret, body, headers["X-Tally-Signature"])
+    assert not verify("whsec_wrong", body, headers["X-Tally-Signature"])
+    assert not verify(endpoint.secret, body + b" ", headers["X-Tally-Signature"])
     envelope = json.loads(body)
     assert (envelope["id"], envelope["type"]) == (message.id, "invoice.issued")
     assert envelope["data"]["invoice_id"] == invoice.id
@@ -82,12 +92,13 @@ def test_issuing_an_invoice_queues_a_signed_delivery_that_verifies(
     assert message.delivered_at is not None and message.last_status == 200
 
 
-@pytest.mark.django_db
 def test_signature_older_than_five_minutes_does_not_verify() -> None:
     body = b'{"id":1}'
     header = outbox.sign("s", body, at=1_000_000)
-    assert outbox.verify("s", body, header, now=1_000_000 + 300)
-    assert not outbox.verify("s", body, header, now=1_000_000 + 301)
+    with freeze_time(datetime.fromtimestamp(1_000_300, tz=UTC)):
+        assert verify("s", body, header)
+    with freeze_time(datetime.fromtimestamp(1_000_301, tz=UTC)):
+        assert not verify("s", body, header)
 
 
 @pytest.mark.django_db
@@ -131,8 +142,10 @@ def test_five_failures_follow_the_backoff_then_dead_letter_then_redeliver(
         # attempt 1 now, then 1 min, 5 min, 30 min, 2 h later: the fifth failure parks it
         expected_gaps = [0, 60, 300, 1800, 7200]
         for n, gap in enumerate(expected_gaps, start=1):
-            clock.tick(gap)
-            assert deliver_due_webhooks() == 0
+            clock.tick(gap - 1)
+            assert deliver_due_webhooks() == 0  # one second early: not due yet
+            clock.tick(1)
+            assert deliver_due_webhooks() == 1
             message.refresh_from_db()
             assert message.attempts == n
             assert message.last_status == 500
@@ -162,8 +175,9 @@ def test_unreachable_host_counts_as_a_failure(subscription: Subscription) -> Non
         tenant=subscription.tenant, url="http://127.0.0.1:9/hooks", secret="s"
     )
     billing.issue_invoice(subscription, NOW)
-    assert deliver_due_webhooks() == 0
+    assert deliver_due_webhooks() == 1
     message = OutboxMessage.objects.get()
+    assert message.delivered_at is None
     assert message.attempts == 1 and message.last_status is None and message.last_error
 
 

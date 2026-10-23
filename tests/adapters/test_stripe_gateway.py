@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from freezegun import freeze_time
@@ -10,8 +11,7 @@ from tally.adapters import billing, stripe_gateway
 from tally.adapters.models import Invoice, Subscription
 from tally.adapters.tasks import bill_due_subscriptions, collect_invoice
 from tally.domain.money import Currency, Money
-from tests.adapters.test_billing import NOW, balance
-from tests.conftest import LIVE_KEY
+from tests.conftest import LIVE_KEY, NOW
 
 
 @pytest.mark.parametrize(
@@ -34,12 +34,16 @@ def test_customer_is_created_once_and_its_id_kept(subscription: Subscription) ->
 
 
 @pytest.mark.django_db
-def test_collect_stores_the_payment_intent_id(subscription: Subscription) -> None:
+def test_collect_stores_the_payment_intent_id_before_confirming(
+    subscription: Subscription,
+) -> None:
     invoice = billing.issue_invoice(subscription, NOW)
     intent = stripe_gateway.collect(invoice)
     invoice.refresh_from_db()
-    assert invoice.stripe_payment_intent_id == intent.id
-    assert intent.id.startswith("pi_")
+    assert invoice.stripe_payment_intent_id is not None
+    assert invoice.stripe_payment_intent_id.startswith("pi_")
+    assert intent.object == "payment_intent"
+    assert invoice.status == "open"  # only the webhook marks it paid
 
 
 @pytest.mark.django_db
@@ -60,16 +64,22 @@ def test_billing_run_hands_each_new_invoice_to_collection(subscription: Subscrip
 
 
 @pytest.mark.live
+@pytest.mark.skipif(not LIVE_KEY, reason="STRIPE_TEST_SECRET_KEY not set")
 @pytest.mark.django_db
-def test_live_test_card_pays_the_invoice_and_posts_cash(
-    subscription: Subscription, settings: object
+def test_live_test_card_is_charged_in_stripe_test_mode(
+    subscription: Subscription, settings: Any
 ) -> None:
-    settings.STRIPE_API_BASE = ""  # type: ignore[attr-defined]
-    settings.STRIPE_TEST_SECRET_KEY = LIVE_KEY  # type: ignore[attr-defined]
-    now = datetime.now(UTC)
-    invoice = billing.issue_invoice(subscription, now)
-    assert collect_invoice(invoice.id) == "succeeded"
-    invoice.refresh_from_db()
-    assert invoice.status == "paid"
-    assert balance(subscription.tenant_id, "1000") == Decimal("49")
-    assert balance(subscription.tenant_id, "1200") == Decimal(0)
+    settings.STRIPE_API_BASE = ""
+    settings.STRIPE_TEST_SECRET_KEY = LIVE_KEY
+    stripe_gateway.client.cache_clear()
+    try:
+        invoice = billing.issue_invoice(subscription, datetime.now(UTC))
+        assert collect_invoice(invoice.id) == "succeeded"
+        invoice.refresh_from_db()
+        intent = stripe_gateway.client().v1.payment_intents.retrieve(
+            invoice.stripe_payment_intent_id or ""
+        )
+        assert (intent.status, intent.amount, intent.currency) == ("succeeded", 4900, "usd")
+        assert intent.metadata["tally_invoice_id"] == str(invoice.id)
+    finally:
+        stripe_gateway.client.cache_clear()

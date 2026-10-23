@@ -87,9 +87,12 @@ SPECTACULAR_SETTINGS = {
 TIME_ZONE = "UTC"
 USE_TZ = True
 
-STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
-STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_API_BASE = os.environ.get("STRIPE_API_BASE", "")  # set to stripe-mock in compose and CI
+# stripe-mock accepts any well-formed test key; against Stripe itself the env var is required.
+STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY") or (
+    "sk_test_stripemock" if STRIPE_API_BASE else ""
+)
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://localhost:9000")
 
 LOGGING_CONFIG = None  # structlog configured in tally.logging

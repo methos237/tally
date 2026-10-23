@@ -36,7 +36,12 @@ def test_every_transition_is_in_the_table_or_rejected(
 
 
 def test_canceled_is_terminal() -> None:
-    assert not any(status is SubscriptionStatus.CANCELED for status, _ in TRANSITIONS)
+    leaving = {
+        target
+        for (status, _), target in TRANSITIONS.items()
+        if status is SubscriptionStatus.CANCELED
+    }
+    assert leaving == {SubscriptionStatus.CANCELED}
 
 
 def test_failed_payment_moves_active_to_past_due_and_success_restores_it() -> None:

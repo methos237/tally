@@ -106,7 +106,7 @@ class Command(BaseCommand):
                             ),
                         )
                     )
-            invoices, paid = self.seed_billing(tenant, SUBSCRIPTIONS[name], rng)
+                invoices, paid = self.seed_billing(tenant, SUBSCRIPTIONS[name], rng)
             self.stdout.write(
                 f"{name}: {len(CHART)} accounts, {ENTRIES + 1} entries, "
                 f"{invoices} invoices ({paid} paid)"

@@ -21,14 +21,7 @@ settings.register_profile("dev", max_examples=100)
 settings.load_profile("ci" if os.environ.get("CI") else "dev")
 
 LIVE_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
-
-
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """`live` tests hit Stripe test mode and are skipped without a key."""
-    skip = pytest.mark.skip(reason="STRIPE_TEST_SECRET_KEY not set")
-    for item in items:
-        if "live" in item.keywords and not LIVE_KEY:
-            item.add_marker(skip)
+NOW = datetime(2026, 2, 1, 9, tzinfo=UTC)
 
 
 Ledger = tuple[Tenant, Account, Account]
@@ -67,16 +60,18 @@ def projection(tenant: Tenant | None = None) -> dict[int, Decimal]:
     return {b.account_id: b.balance for b in rows}
 
 
+def balance(tenant_id: int, code: str) -> Decimal:
+    """One account's balance straight from the journal."""
+    account = Account.objects.get(tenant_id=tenant_id, code=code)
+    return fold_from_journal(account.tenant).get(account.id, Decimal(0))
+
+
 @pytest.fixture
 def subscription(tenant: Tenant) -> Subscription:
     """An active monthly subscription that has never been billed, with the three billing
     accounts (1000 cash, 1200 receivable, 4000 revenue) on the tenant."""
-    for code, name, type_ in [
-        ("1000", "Cash", "asset"),
-        ("1200", "Accounts receivable", "asset"),
-        ("4000", "Subscription revenue", "revenue"),
-    ]:
-        Account.objects.create(tenant=tenant, code=code, name=name, type=type_, currency="USD")
+    chart_for(tenant)
+    Account.objects.create(tenant=tenant, code="1000", name="Cash", type="asset", currency="USD")
     plan = Plan.objects.create(
         tenant=tenant,
         code="pro",

@@ -6,7 +6,6 @@ hits the unique index and is acknowledged without being queued again.
 
 import json
 
-import stripe
 from django.db import IntegrityError, transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -22,7 +21,7 @@ from tally.adapters.tasks import process_stripe_event
 def stripe_webhook(request: HttpRequest) -> HttpResponse:
     try:
         event = stripe_gateway.verify(request.body, request.headers.get("Stripe-Signature"))
-    except (ValueError, stripe.SignatureVerificationError) as exc:
+    except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     try:
         with transaction.atomic():

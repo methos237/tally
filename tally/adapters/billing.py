@@ -15,11 +15,12 @@ from tally.application.journal import PostEntry
 from tally.domain.billing import (
     Event,
     Interval,
-    InvalidTransition,
     InvoiceStatus,
+    SubscriptionStatus,
     add_interval,
     invoice_issued,
     invoice_paid,
+    transition,
 )
 from tally.domain.money import Currency, Money
 
@@ -56,21 +57,15 @@ def issue_invoice(subscription: models.Subscription, now: datetime) -> models.In
         invoice = models.Invoice.objects.create(
             tenant_id=subscription.tenant_id,
             subscription=subscription,
-            customer_id=subscription.customer_id,
+            description=f"{plan.name} {start:%Y-%m-%d} to {end:%Y-%m-%d}",
             period_start=start,
             period_end=end,
             amount=money.amount,
             currency=money.currency.value,
             issued_at=now,
         )
-        models.InvoiceLine.objects.create(
-            invoice=invoice,
-            description=f"{plan.name} {start:%Y-%m-%d} to {end:%Y-%m-%d}",
-            amount=money.amount,
-            currency=money.currency.value,
-        )
         accounts = account_ids(subscription.tenant_id)
-        entry = PostEntry(DjangoJournalRepository())(
+        PostEntry(DjangoJournalRepository())(
             invoice_issued(
                 subscription.tenant_id,
                 invoice.id,
@@ -80,8 +75,6 @@ def issue_invoice(subscription: models.Subscription, now: datetime) -> models.In
                 accounts[REVENUE],
             )
         )
-        invoice.issue_entry_id = entry.id
-        invoice.save(update_fields=["issue_entry"])
         subscription.billed_through = end
         subscription.save(update_fields=["billed_through"])
         outbox.publish(invoice.tenant_id, "invoice.issued", invoice_event(invoice))
@@ -92,7 +85,7 @@ def invoice_event(invoice: models.Invoice) -> dict[str, object]:
     return {
         "invoice_id": invoice.id,
         "subscription_id": invoice.subscription_id,
-        "customer_id": invoice.customer_id,
+        "customer_id": invoice.subscription.customer_id,
         "status": invoice.status,
         "amount": invoice.amount,
         "currency": invoice.currency,
@@ -108,7 +101,7 @@ def mark_paid(invoice_id: int, now: datetime) -> models.Invoice:
         if invoice.status == InvoiceStatus.PAID:
             return invoice
         accounts = account_ids(invoice.tenant_id)
-        entry = PostEntry(DjangoJournalRepository())(
+        PostEntry(DjangoJournalRepository())(
             invoice_paid(
                 invoice.tenant_id,
                 invoice.id,
@@ -120,8 +113,7 @@ def mark_paid(invoice_id: int, now: datetime) -> models.Invoice:
         )
         invoice.status = InvoiceStatus.PAID.value
         invoice.paid_at = now
-        invoice.payment_entry_id = entry.id
-        invoice.save(update_fields=["status", "paid_at", "payment_entry"])
+        invoice.save(update_fields=["status", "paid_at"])
         apply_to_subscription(invoice.subscription_id, Event.PAYMENT_SUCCEEDED)
         outbox.publish(invoice.tenant_id, "invoice.paid", invoice_event(invoice))
     return invoice
@@ -133,19 +125,16 @@ def mark_failed(invoice_id: int) -> None:
 
 
 def apply_to_subscription(subscription_id: int, event: Event) -> None:
-    """Advance the subscription if the table allows it. Money is already recorded by the
-    caller; a canceled subscription simply stays canceled."""
+    """Run the state machine under lock; publish only when the status actually changed."""
     with transaction.atomic():
         subscription = models.Subscription.objects.select_for_update().get(id=subscription_id)
         before = subscription.status
-        try:
-            subscription.apply(event)
-        except InvalidTransition:
+        subscription.status = transition(SubscriptionStatus(before), event).value
+        if subscription.status == before:
             return
         subscription.save(update_fields=["status"])
-        if subscription.status != before:
-            outbox.publish(
-                subscription.tenant_id,
-                f"subscription.{subscription.status}",
-                {"subscription_id": subscription.id, "status": subscription.status},
-            )
+        outbox.publish(
+            subscription.tenant_id,
+            f"subscription.{subscription.status}",
+            {"subscription_id": subscription.id, "status": subscription.status},
+        )

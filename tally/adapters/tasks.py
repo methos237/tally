@@ -1,7 +1,8 @@
 from datetime import timedelta
 
+import stripe
 from celery import shared_task
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -43,7 +44,9 @@ def bill_due_subscriptions() -> int:
     for subscription in due:
         try:
             invoice = billing.issue_invoice(subscription, now)
-        except IntegrityError:
+        except IntegrityError as exc:
+            if "uq_invoice_subscription_period" not in str(exc):
+                raise
             continue  # an overlapping run already invoiced this period
         issued += 1
         collect_invoice.delay(invoice.id)
@@ -52,16 +55,15 @@ def bill_due_subscriptions() -> int:
 
 @shared_task
 def collect_invoice(invoice_id: int) -> str:
-    """Charge an open invoice through Stripe. Returns the PaymentIntent status. The
-    webhook normally marks the invoice paid; a synchronous success is applied here too,
-    and mark_paid is idempotent so both paths can run."""
-    invoice = Invoice.objects.select_related("customer").get(id=invoice_id)
+    """Charge an open invoice through Stripe. Returns the PaymentIntent status; the
+    webhook, not this task, marks the invoice paid or the subscription past due."""
+    invoice = Invoice.objects.select_related("subscription__customer").get(id=invoice_id)
     if invoice.status != InvoiceStatus.OPEN:
         return invoice.status
-    intent = stripe_gateway.collect(invoice)
-    if intent.status == "succeeded":
-        billing.mark_paid(invoice.id, timezone.now())
-    return intent.status
+    try:
+        return stripe_gateway.collect(invoice).status
+    except stripe.CardError as exc:
+        return exc.code or "card_declined"  # Stripe also sends payment_intent.payment_failed
 
 
 @shared_task
@@ -89,12 +91,28 @@ def process_stripe_event(row_id: int) -> str:
 
 @shared_task
 def deliver_due_webhooks() -> int:
-    """Send every outbox message whose time has come. Returns deliveries that succeeded."""
-    due = (
-        OutboxMessage.objects.filter(
-            delivered_at__isnull=True, dead_at__isnull=True, next_attempt_at__lte=timezone.now()
+    """Fan out every outbox message whose time has come. Returns messages dispatched."""
+    due = OutboxMessage.objects.filter(
+        delivered_at__isnull=True, dead_at__isnull=True, next_attempt_at__lte=timezone.now()
+    ).values_list("id", flat=True)
+    for message_id in due:
+        deliver_webhook.delay(message_id)
+    return len(due)
+
+
+@shared_task
+def deliver_webhook(message_id: int) -> bool:
+    """One delivery attempt under a row lock, so overlapping sweeps never double-post."""
+    with transaction.atomic():
+        message = (
+            OutboxMessage.objects.select_for_update(skip_locked=True)
+            .select_related("endpoint")
+            .filter(
+                id=message_id,
+                delivered_at__isnull=True,
+                dead_at__isnull=True,
+                next_attempt_at__lte=timezone.now(),
+            )
+            .first()
         )
-        .select_related("endpoint")
-        .order_by("next_attempt_at")
-    )
-    return sum(outbox.attempt(message) for message in due)
+        return message is not None and outbox.attempt(message)
