@@ -94,6 +94,9 @@ STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY") or (
 )
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://localhost:9000")
+S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "tally")
+S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "tally12345")
+S3_BUCKET = os.environ.get("S3_BUCKET", "reports")
 
 LOGGING_CONFIG = None  # structlog configured in tally.logging
 
