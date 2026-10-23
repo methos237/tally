@@ -11,6 +11,7 @@ from tally.adapters.models import (
     IdempotencyRecord,
     Invoice,
     OutboxMessage,
+    SettlementMarker,
     StripeEvent,
     Subscription,
 )
@@ -116,3 +117,11 @@ def deliver_webhook(message_id: int) -> bool:
             .first()
         )
         return message is not None and outbox.attempt(message)
+
+
+@shared_task
+def settle_yesterday() -> str:
+    """Mark the previous UTC day settled. Idempotent: the day is unique."""
+    day = (timezone.now() - timedelta(days=1)).date()
+    SettlementMarker.objects.get_or_create(day=day)
+    return day.isoformat()

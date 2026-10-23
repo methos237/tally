@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+from celery.schedules import crontab
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-not-secret")
@@ -61,6 +63,10 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 60,
     },
     "deliver-due-webhooks": {"task": "tally.adapters.tasks.deliver_due_webhooks", "schedule": 10},
+    "settle-yesterday": {
+        "task": "tally.adapters.tasks.settle_yesterday",
+        "schedule": crontab(hour=0, minute=5),
+    },
 }
 
 REST_FRAMEWORK = {
@@ -94,6 +100,11 @@ STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY") or (
 )
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://localhost:9000")
+S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "tally")
+S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "tally12345")
+S3_BUCKET = os.environ.get("S3_BUCKET", "reports")
+# Shared with Airflow (compose: AIRFLOW_VAR_TALLY_INTERNAL_TOKEN). Guards /internal/*.
+INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "dev-internal-token")
 
 LOGGING_CONFIG = None  # structlog configured in tally.logging
 

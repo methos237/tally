@@ -311,3 +311,87 @@ class OutboxMessage(models.Model):
                 condition=models.Q(delivered_at__isnull=True, dead_at__isnull=True),
             )
         ]
+
+
+class Statement(models.Model):
+    """A bank or processor statement imported from CSV. Reconciled when every line is
+    matched or its exception resolved."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="statements")
+    source = models.CharField(max_length=16, choices=[("bank", "bank"), ("processor", "processor")])
+    period_start = models.DateField()
+    period_end = models.DateField()
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "statements"
+
+
+class StatementLine(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="+")
+    statement = models.ForeignKey(Statement, on_delete=models.PROTECT, related_name="lines")
+    line_no = models.PositiveIntegerField()
+    occurred_on = models.DateField()
+    amount = models.DecimalField(max_digits=18, decimal_places=6)
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+    reference = models.CharField(max_length=128, blank=True, default="")
+    description = models.CharField(max_length=200, blank=True, default="")
+    matched_entry = models.ForeignKey(
+        JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    match_rule = models.CharField(max_length=16, blank=True, default="")
+
+    class Meta:
+        db_table = "statement_lines"
+        ordering = ["line_no"]
+        constraints = [
+            models.UniqueConstraint(fields=["statement", "line_no"], name="uq_statement_line_no")
+        ]
+
+
+class ReconciliationException(models.Model):
+    """A statement line the rules could not place. Resolved by an adjusting entry
+    (posted through the journal, so it balances) or by a recorded explanation."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="+")
+    statement = models.ForeignKey(Statement, on_delete=models.PROTECT, related_name="exceptions")
+    line = models.OneToOneField(StatementLine, on_delete=models.PROTECT, related_name="exception")
+    reason = models.CharField(max_length=16)
+    difference = models.DecimalField(max_digits=18, decimal_places=6)
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+    entry = models.ForeignKey(
+        JournalEntry,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+        help_text="the entry whose reference matched with another amount",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolution = models.CharField(
+        max_length=16,
+        blank=True,
+        default="",
+        choices=[("adjusted", "adjusted"), ("explained", "explained")],
+    )
+    adjusting_entry = models.OneToOneField(
+        JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    explanation = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "reconciliation_exceptions"
+        ordering = ["id"]
+
+
+class SettlementMarker(models.Model):
+    """A day whose entries are final. The nightly report's sensor waits for this row;
+    Beat writes it shortly after midnight, an operator can write it by hand."""
+
+    day = models.DateField(unique=True)
+    settled_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "settlement_markers"

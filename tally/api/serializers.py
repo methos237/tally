@@ -109,3 +109,75 @@ class DeadLetterOut(serializers.ModelSerializer[models.OutboxMessage]):
             "last_error",
             "dead_at",
         ]
+
+
+class ExceptionOut(serializers.ModelSerializer[models.ReconciliationException]):
+    line_no = serializers.IntegerField(source="line.line_no")
+    reference = serializers.CharField(source="line.reference")
+    entry = serializers.PrimaryKeyRelatedField[models.JournalEntry](read_only=True)
+    adjusting_entry = serializers.PrimaryKeyRelatedField[models.JournalEntry](read_only=True)
+
+    class Meta:
+        model = models.ReconciliationException
+        fields = [
+            "id",
+            "statement",
+            "line_no",
+            "reference",
+            "reason",
+            "difference",
+            "currency",
+            "entry",
+            "created_at",
+            "resolved_at",
+            "resolution",
+            "adjusting_entry",
+            "explanation",
+        ]
+
+
+class StatementLineOut(serializers.ModelSerializer[models.StatementLine]):
+    matched_entry = serializers.PrimaryKeyRelatedField[models.JournalEntry](read_only=True)
+
+    class Meta:
+        model = models.StatementLine
+        fields = [
+            "line_no",
+            "occurred_on",
+            "amount",
+            "currency",
+            "reference",
+            "description",
+            "matched_entry",
+            "match_rule",
+        ]
+
+
+class StatementOut(serializers.ModelSerializer[models.Statement]):
+    lines = StatementLineOut(many=True)
+    exceptions = ExceptionOut(many=True)
+
+    class Meta:
+        model = models.Statement
+        fields = [
+            "id",
+            "source",
+            "period_start",
+            "period_end",
+            "uploaded_at",
+            "reconciled_at",
+            "lines",
+            "exceptions",
+        ]
+
+
+class ResolveIn(serializers.Serializer[Any]):
+    action = serializers.ChoiceField(choices=["adjust", "explain"])
+    account = serializers.CharField(max_length=32, required=False, help_text="for adjust")
+    explanation = serializers.CharField(required=False, help_text="for explain")
+
+    def validate(self, data: dict[str, Any]) -> dict[str, Any]:
+        needed = "account" if data["action"] == "adjust" else "explanation"
+        if not data.get(needed):
+            raise serializers.ValidationError({needed: f"required when action is {data['action']}"})
+        return data

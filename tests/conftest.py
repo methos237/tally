@@ -1,7 +1,10 @@
 import os
 from collections import defaultdict
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
+from uuid import uuid4
 
 import pytest
 from hypothesis import settings
@@ -84,3 +87,17 @@ def subscription(tenant: Tenant) -> Subscription:
     return Subscription.objects.create(
         tenant=tenant, customer=customer, plan=plan, started_at=datetime(2026, 1, 31, tzinfo=UTC)
     )
+
+
+@pytest.fixture
+def bucket(settings: Any) -> Iterator[str]:
+    """A bucket of this test's own on the compose (or CI) RustFS, removed afterwards."""
+    from tally.adapters import reports
+
+    client = reports.s3()
+    name = settings.S3_BUCKET = f"test-{uuid4().hex[:12]}"
+    client.create_bucket(Bucket=name)
+    yield name
+    for obj in client.list_objects_v2(Bucket=name).get("Contents", []):
+        client.delete_object(Bucket=name, Key=obj["Key"])
+    client.delete_bucket(Bucket=name)

@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
     "argon2-cffi>=25.1.0",
+    "boto3>=1.43.118",
     "celery>=5.6.3",
     "django>=6.0.9",
     "django-celery-beat>=2.9.0",
@@ -17,6 +18,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "boto3-stubs>=1.43.118",
     "celery-types>=0.26.0",
     "django-stubs>=6.1.2",
     "djangorestframework-stubs>=3.18.1",
@@ -72,5 +74,5 @@ addopts = "-q"
 markers = ["live: hits Stripe test mode; skipped without STRIPE_TEST_SECRET_KEY"]
 
 [[tool.mypy.overrides]]
-module = ["django_celery_beat.*", "django_redis.*", "celery.*"]
+module = ["django_celery_beat.*", "django_redis.*", "celery.*", "botocore.*"]
 ignore_missing_imports = true
