@@ -184,9 +184,34 @@ To verify: split the header, recompute the digest over `t` + `.` + the raw body 
 
 ## Reconciliation and the nightly report
 
-A `Statement` is imported from CSV (bank or processor layout). Matching rules in the domain run in order: exact reference and amount, then amount within a three-day window, then nothing. Every line ends matched or excepted exactly once (a Hypothesis property). Exceptions carry a reason and are resolved from the console by posting an adjusting entry or recording an explanation. A statement is reconciled when no line is left unexplained.
+**Statements.** `POST /api/statements` takes the raw CSV body (`Content-Type: text/csv`) in either layout, told apart by the header:
 
-`partner_daily_report` is an Airflow DAG with a settlement sensor, a report task and an outbox task. The report itself is `manage.py partner_report --date --tenant`, which writes a CSV per tenant to an S3 bucket (RustFS in compose), so the job is testable without Airflow and Airflow contributes what it is good at: scheduling, retries, SLAs, backfill.
+```
+Date,Description,Reference,Amount              bank: signed amounts in the tenant's cash currency
+id,created,amount,currency,description         processor: Stripe balance-transaction style, id is the reference
+```
+
+`POST /api/statements/{id}/reconcile` runs the matching rules in `tally/domain/reconciliation.py` against the cash account's movements in the statement window (plus three days either side). The rules run in order per line, lowest line first, and every ledger entry is used at most once:
+
+1. `reference`: an entry carries the line's reference (the entry's source id, or the Stripe PaymentIntent id for a payment) and the same amount.
+2. `amount_window`: same amount within three days; the earliest candidate wins.
+3. Otherwise an exception: `amount_differs` when the reference matched with another amount (the difference is carried), `unmatched` when nothing fits.
+
+A Hypothesis test checks that every line ends matched or excepted exactly once and that shuffling the input changes nothing. Re-running reconcile only touches lines that are still unplaced.
+
+**Exception lifecycle.** Each exception is a row with a reason and a `reconciliation.exception` outbound webhook. `GET /api/reconciliation-exceptions?status=open` lists them. `POST /api/reconciliation-exceptions/{id}/resolve` takes `{"action": "adjust", "account": "6100"}`, which posts the difference as a balanced adjusting entry (cash against the chosen account, source `adjustment/{exception id}`), or `{"action": "explain", "explanation": "..."}`, which records the reason without touching the books. A resolved exception cannot be resolved again (409). The statement's `reconciled_at` is set the moment no line is unplaced and no exception is open. The seed leaves one statement per tenant with exactly three exceptions: a bank fee, an unidentified deposit, and a settlement one cent off.
+
+**Nightly report.** `manage.py partner_report --date 2026-10-22 [--tenant 1] [--notify]` writes one CSV per tenant to the `reports` bucket (RustFS in compose, any S3 endpoint in production) at `{tenant}/{date}.csv`: account balances as of the day, invoice counts and totals by status, open exceptions. A rerun overwrites the same key, which is what a backfill wants. `--notify` queues a `report.ready` webhook naming the bucket and key.
+
+**Why Airflow.** The report is a Django command and tests without Airflow. Airflow contributes what it is good at: a schedule, a sensor that waits for the day to settle, retries, a run timeout, backfill, and a UI that shows which night failed and why. `docker compose --profile batch up -d` starts a stock `apache/airflow:3.1.8` (LocalExecutor, metadata database on the same Postgres, UI on 8081 without login). The DAG `partner_daily_report` in `airflow/dags/` is three HTTP calls against Tally's `/internal` endpoints, guarded by `X-Internal-Token`, so the image needs nothing of Tally installed:
+
+```
+wait_for_settlement  HttpSensor  GET  /internal/settlement/{day}     404 until Beat (00:05 UTC) or an operator settles the day
+partner_report       HttpOperator POST /internal/reports/{day}        writes every tenant's CSV
+report_ready         HttpOperator POST /internal/reports/{day}/ready  queues report.ready per tenant
+```
+
+Retries 3, five minutes apart; `dagrun_timeout` of 30 minutes stands in for the SLA that Airflow 3 removed; `catchup=False`. A scheduled run reports its logical date; a manual trigger reports yesterday unless `params.day` is given. Backfill a range with `airflow backfill create --dag-id partner_daily_report --from-date 2026-10-01 --to-date 2026-10-07`. CI installs Airflow and runs `airflow dags test` against a fake Tally that records the three calls.
 
 ## Console
 
@@ -228,7 +253,7 @@ Each phase is a branch merged by pull request and tracked as a GitHub issue.
 - [x] 1 Domain and journal: the balancing invariant
 - [x] 2 Posting API: idempotency, locking, rate limiting
 - [x] 3 Subscriptions, Stripe, webhooks in and out
-- [ ] 4 Reconciliation and the nightly partner report
+- [x] 4 Reconciliation and the nightly partner report
 - [ ] 5 Vue 3 operations console
 - [ ] 6 Observability, demo script, README polish
 - [ ] 7 Stretch: Kotlin posting service, Temporal dunning workflow, multi-currency, Postgres row-level security
