@@ -1,5 +1,6 @@
 import os
 from collections import defaultdict
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -88,14 +89,20 @@ def subscription(tenant: Tenant) -> Subscription:
     )
 
 
-@pytest.fixture(scope="session")
-def bucket() -> str:
-    """The reports bucket on the compose (or CI) RustFS, created on first use."""
+@pytest.fixture
+def bucket() -> Iterator[str]:
+    """The reports bucket on the compose (or CI) RustFS, created on first use. Objects
+    written during the test are removed afterwards: the bucket is shared with dev."""
     from tally.adapters import reports
 
     client = reports.s3()
+    name = str(django_settings.S3_BUCKET)
     try:
-        client.head_bucket(Bucket=django_settings.S3_BUCKET)
+        client.head_bucket(Bucket=name)
     except ClientError:
-        client.create_bucket(Bucket=django_settings.S3_BUCKET)
-    return str(django_settings.S3_BUCKET)
+        client.create_bucket(Bucket=name)
+    before = {o["Key"] for o in client.list_objects_v2(Bucket=name).get("Contents", [])}
+    yield name
+    after = {o["Key"] for o in client.list_objects_v2(Bucket=name).get("Contents", [])}
+    for key in after - before:
+        client.delete_object(Bucket=name, Key=key)

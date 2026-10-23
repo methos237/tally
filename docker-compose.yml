@@ -58,6 +58,42 @@ services:
       /bin/sh -c "aws --endpoint-url http://s3:9000 s3api head-bucket --bucket reports 2>/dev/null
       || aws --endpoint-url http://s3:9000 s3 mb s3://reports"
 
+  # Nightly report orchestrator. `docker compose --profile batch up -d`; UI on 8081, no login.
+  # Metadata DB is a second database on the same Postgres; Tally itself runs on the host
+  # (make dev), reached as host.docker.internal:8001.
+  airflow-init:
+    image: apache/airflow:3.1.8
+    profiles: ["batch"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment: &airflow-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://tally:tally@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True"
+      AIRFLOW_CONN_TALLY: http://host.docker.internal:8001
+      AIRFLOW_VAR_TALLY_INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      TALLY_DATABASE_URL: postgresql://tally:tally@postgres:5432/tally
+    volumes: ["./docker/airflow-init.sh:/airflow-init.sh:ro"]
+    entrypoint: ["/airflow-init.sh"]
+
+  airflow:
+    image: apache/airflow:3.1.8
+    profiles: ["batch"]
+    depends_on:
+      airflow-init: { condition: service_completed_successfully }
+    environment: *airflow-env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["8081:8080"]
+    volumes: ["./airflow/dags:/opt/airflow/dags:ro"]
+    command: standalone
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
 volumes:
   pgdata:
   s3data:

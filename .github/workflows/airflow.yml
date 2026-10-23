@@ -1,0 +1,39 @@
+name: airflow
+
+on:
+  push:
+    branches: [master]
+    paths: ["airflow/**", ".github/workflows/airflow.yml"]
+  pull_request:
+
+jobs:
+  dag-test:
+    runs-on: ubuntu-latest
+    env:
+      AIRFLOW_HOME: /tmp/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_FOLDER: ${{ github.workspace }}/airflow/dags
+      AIRFLOW_CONN_TALLY: http://localhost:8001
+      AIRFLOW_VAR_TALLY_INTERNAL_TOKEN: ci-token
+      FAKE_TALLY_LOG: /tmp/fake-tally.log
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: >
+          pip install "apache-airflow[http]==3.1.8"
+          --constraint https://raw.githubusercontent.com/apache/airflow/constraints-3.1.8/constraints-3.12.txt
+      - run: python airflow/tests/fake_tally.py 8001 &
+      - run: airflow db migrate
+      - run: airflow dags list-import-errors && airflow dags list | grep partner_daily_report
+      - run: airflow dags test partner_daily_report 2026-10-22
+      - name: the three calls happened, in order, with the token
+        run: |
+          cat "$FAKE_TALLY_LOG"
+          diff <(cut -d' ' -f1-3 "$FAKE_TALLY_LOG") - <<'EOF2'
+          GET /internal/settlement/2026-10-22 ok
+          POST /internal/reports/2026-10-22 ok
+          POST /internal/reports/2026-10-22/ready ok
+          EOF2
