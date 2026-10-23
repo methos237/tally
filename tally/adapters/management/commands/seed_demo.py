@@ -1,5 +1,6 @@
 """Deterministic demo data: two tenants, a 12-account chart each, 400 entries over 90 days,
-3 plans, 10 customers and a dozen subscriptions per tenant invoiced through the demo date.
+3 plans, 10 customers and a dozen subscriptions per tenant invoiced through the demo date,
+and one bank statement per tenant that reconciles with exactly three exceptions.
 
 Everything goes through PostEntry, so the projection is exercised the same way
 the API will exercise it. Re-running is a no-op once the tenants exist; the
@@ -14,8 +15,9 @@ from typing import Any
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from tally.adapters import billing
+from tally.adapters import billing, reconciliation
 from tally.adapters.models import Account, Customer, Plan, Subscription, Tenant
+from tally.adapters.models import JournalEntry as JournalEntryRow
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import PostEntry
 from tally.domain.journal import JournalEntry, Line
@@ -107,9 +109,10 @@ class Command(BaseCommand):
                         )
                     )
                 invoices, paid = self.seed_billing(tenant, SUBSCRIPTIONS[name], rng)
+                exceptions = self.seed_statement(tenant)
             self.stdout.write(
                 f"{name}: {len(CHART)} accounts, {ENTRIES + 1} entries, "
-                f"{invoices} invoices ({paid} paid)"
+                f"{invoices} invoices ({paid} paid), 1 statement ({exceptions} exceptions)"
             )
 
     def seed_billing(self, tenant: Tenant, count: int, rng: random.Random) -> tuple[int, int]:
@@ -156,3 +159,40 @@ class Command(BaseCommand):
                     )
                     paid += 1
         return invoices, paid
+
+    def seed_statement(self, tenant: Tenant) -> int:
+        """A bank statement for the last week: every payment in the ledger, plus three
+        deliberate exceptions. Reconciled on the spot so the exceptions are visible."""
+        week = DEMO_DATE - timedelta(days=7)
+        payments = (
+            JournalEntryRow.objects.filter(
+                tenant=tenant,
+                source_type="payment",
+                occurred_at__gte=week,
+                occurred_at__lte=DEMO_DATE,
+            )
+            .prefetch_related("lines__account")
+            .order_by("occurred_at", "id")
+        )
+        rows = ["Date,Description,Reference,Amount"]
+        last: JournalEntryRow | None = None
+        for entry in payments:
+            cash = next(line for line in entry.lines.all() if line.account.code == "1000")
+            rows.append(
+                f"{entry.occurred_at:%Y-%m-%d},Card settlement,{entry.source_id},{cash.amount:.2f}"
+            )
+            last = entry
+        assert last is not None, "the billing seed left no payments in the last week"
+        day = f"{DEMO_DATE:%Y-%m-%d}"
+        # 1. a fee the ledger never saw; 2. a deposit with no counterpart; 3. the last
+        # payment one cent off instead of exact, so its reference matches but the amount does not
+        exact = rows.pop()
+        off_by_one = Decimal(exact.rsplit(",", 1)[1]) + Decimal("0.01")
+        rows += [
+            f"{day},Monthly account fee,FEE-{DEMO_DATE:%Y%m},-12.50",
+            f"{day},Unidentified deposit,,777.77",
+            f"{last.occurred_at:%Y-%m-%d},Card settlement,{last.source_id},{off_by_one:.2f}",
+        ]
+        statement = reconciliation.import_statement(tenant.id, "\n".join(rows) + "\n")
+        reconciliation.reconcile(statement, DEMO_DATE)
+        return statement.exceptions.count()

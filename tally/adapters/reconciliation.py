@@ -119,7 +119,11 @@ def ledger_items(statement: models.Statement) -> tuple[LedgerItem, ...]:
         )
         .select_related("entry")
     )
-    payment_ids = [line.entry.source_id for line in lines if line.entry.source_type == "payment"]
+    payment_ids = [
+        line.entry.source_id
+        for line in lines
+        if line.entry.source_type == "payment" and line.entry.source_id.isdigit()
+    ]  # invoice payments; other "payment" sources (seeded, imported) have no intent
     intents: dict[str, str] = {
         str(invoice_id): str(intent)
         for invoice_id, intent in models.Invoice.objects.filter(
