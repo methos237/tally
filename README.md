@@ -148,13 +148,39 @@ Amounts are strings with six decimal places on the wire; a JSON number is reject
 
 ## Billing and Stripe
 
-A `Subscription` moves through `trialing`, `active`, `past_due`, `canceled`. Celery Beat runs `bill_due_subscriptions` every minute; each due subscription gets an `Invoice` (unique on subscription and period start, so a rerun cannot double-bill) and a journal entry debiting accounts receivable and crediting revenue. Collection goes through a Stripe PaymentIntent in test mode. A paid invoice posts cash against receivable. Stripe moves the test money; the ledger keeps the books.
+Tally owns the subscription engine and the books; Stripe only collects. Stripe's own Billing product is deliberately not used: the point of this repo is the engine.
 
-**Inbound webhooks.** `POST /webhooks/stripe` verifies `Stripe-Signature` with the SDK, rejects timestamps older than five minutes, deduplicates on `event.id`, returns 200 immediately and hands the event to Celery. A tampered signature is rejected; the same event delivered twice is processed once.
+```
+                 payment_succeeded
+        ┌──────────────────────────────┐
+        ▼                              │
+   ┌─────────┐  payment_failed   ┌──────────┐
+   │ active  │ ────────────────► │ past_due │
+   └─────────┘                   └──────────┘
+        │ cancel                      │ cancel
+        ▼                              ▼
+   ┌──────────────────────────────────────┐
+   │              canceled                 │   (terminal)
+   └──────────────────────────────────────┘
+```
 
-**Outbound webhooks.** Tenants register endpoints with a secret. Events (`invoice.paid`, `entry.posted`, `reconciliation.exception`, `report.ready`) are written to an outbox table in the same transaction as the business write. A Celery task delivers them with `X-Tally-Signature: t=<timestamp>,v1=<hmac-sha256>` and retries at 1 minute, 5 minutes, 30 minutes, 2 hours and 12 hours before parking the delivery in a dead-letter list with the last response. The console shows dead letters and offers redelivery.
+The state machine is a transition table in `tally/domain/billing.py`; a Hypothesis test walks every `(status, event)` pair and checks it is either in the table or rejected. Subscriptions bill in advance: `billed_through` null or past means due. Celery Beat runs `bill_due_subscriptions` every minute; each due subscription gets an `Invoice` (unique on subscription and period start, so an overlapping run cannot double-bill) and a journal entry debiting accounts receivable 1200 and crediting revenue 4000. Periods clamp to month end, so the 31st bills on the 28th and never skips a month.
 
-CI never calls Stripe. The SDK is wrapped by one gateway module; tests run against `stripe-mock` and recorded events. Tests marked `live` use the Stripe CLI against test mode and are skipped without a key.
+**What Stripe does, what the ledger does.** `collect_invoice` creates one Stripe `Customer` per Tally customer and one `PaymentIntent` per invoice, confirmed server-side with the `4242` test card, off session, redirects disabled, with `idempotency_key=tally-invoice-{id}` so a retried task cannot charge twice. The intent id is stored on the invoice; a webhook resolves to an invoice by that id, never by metadata. A paid invoice posts cash 1000 against receivable 1200 and reactivates a past-due subscription; a failed payment moves the subscription to `past_due`. One module, `tally/adapters/stripe_gateway.py`, builds the `StripeClient` from settings and is the only place that imports the SDK.
+
+**Inbound webhooks.** `POST /webhooks/stripe` verifies `Stripe-Signature` with the SDK (HMAC-SHA256, timestamps older than five minutes rejected), inserts `event.id` into `stripe_events`, returns 200 and hands the row to `process_stripe_event`. A tampered signature is a 400 and nothing is stored; the same event delivered twice is acknowledged and processed once; an intent Tally never created (a `stripe trigger` fixture, say) is acknowledged and books nothing.
+
+**Outbound webhooks.** Tenants register endpoints with `POST /api/webhook-endpoints` and receive the secret once. Events (`invoice.issued`, `invoice.paid`, `subscription.past_due`, `subscription.active`) are written to `webhook_outbox` in the same transaction as the business write, so they commit or roll back with it. `deliver_due_webhooks` sweeps every ten seconds and posts the envelope `{"id", "type", "created_at", "data"}` with:
+
+```
+X-Tally-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>
+X-Tally-Event: invoice.paid
+X-Tally-Delivery: <message id>
+```
+
+To verify: split the header, recompute the digest over `t` + `.` + the raw body with your secret, compare with `hmac.compare_digest`, and reject if `t` is more than 300 seconds from now. The test suite verifies deliveries with exactly this recipe (`tally.adapters.outbox.verify`). Retries follow 1 minute, 5 minutes, 30 minutes, 2 hours; the fifth failure parks the message in the dead-letter list at `GET /api/webhook-endpoints/{id}/dead-letters` with the last status and error, and `POST .../dead-letters/{id}/redeliver` puts it back in the queue.
+
+**Local loop.** `stripe login` once, then `scripts/stripe-listen.sh` forwards sandbox events to `localhost:8001/webhooks/stripe` and prints the `whsec_` for `STRIPE_WEBHOOK_SECRET`. CI never calls Stripe: tests run against `stripe-mock` and hand-built events in the recorded shape. Tests marked `live` pay a real test-mode invoice with the `4242` card and are skipped without `STRIPE_TEST_SECRET_KEY` (use a restricted key with Customers and PaymentIntents write).
 
 ## Reconciliation and the nightly report
 
@@ -201,7 +227,7 @@ Each phase is a branch merged by pull request and tracked as a GitHub issue.
 - [x] 0 Skeleton, compose, CI
 - [x] 1 Domain and journal: the balancing invariant
 - [x] 2 Posting API: idempotency, locking, rate limiting
-- [ ] 3 Subscriptions, Stripe, webhooks in and out
+- [x] 3 Subscriptions, Stripe, webhooks in and out
 - [ ] 4 Reconciliation and the nightly partner report
 - [ ] 5 Vue 3 operations console
 - [ ] 6 Observability, demo script, README polish
