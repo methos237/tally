@@ -1,4 +1,4 @@
-.PHONY: up down dev migrate test lint
+.PHONY: up down dev migrate test test-live lint
 
 up:
 	docker compose up -d --wait
@@ -17,6 +17,9 @@ dev: up migrate
 
 test:
 	uv run pytest -m "not live"
+
+test-live:  # Stripe test mode; needs STRIPE_TEST_SECRET_KEY in .env
+	set -a; . ./.env; set +a; STRIPE_API_BASE= uv run pytest -m live -rs
 
 lint:
 	uv run ruff format --check . && uv run ruff check . && uv run mypy tally && uv run lint-imports
