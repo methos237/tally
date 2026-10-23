@@ -11,6 +11,7 @@ dependencies = [
     "djangorestframework>=3.18.3",
     "drf-spectacular>=0.30.0",
     "psycopg[binary]>=3.3.6",
+    "stripe>=16.0.0",
     "structlog>=26.1.0",
 ]
 
@@ -20,6 +21,7 @@ dev = [
     "django-stubs>=6.1.2",
     "djangorestframework-stubs>=3.18.1",
     "factory-boy>=3.3.3",
+    "freezegun>=1.5.5",
     "hypothesis>=6.170.5",
     "import-linter>=2.15",
     "mypy>=2.4.0",

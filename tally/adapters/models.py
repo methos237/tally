@@ -9,6 +9,7 @@ from secrets import token_urlsafe
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
 
+from tally.domain.billing import Event, Interval, InvoiceStatus, SubscriptionStatus, transition
 from tally.domain.journal import AccountType
 from tally.domain.money import Currency
 
@@ -162,3 +163,100 @@ class IdempotencyRecord(models.Model):
             models.UniqueConstraint(fields=["tenant", "key"], name="uq_idempotency_tenant_key")
         ]
         indexes = [models.Index(fields=["created_at"], name="ix_idempotency_created")]
+
+
+class Plan(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="plans")
+    code = models.CharField(max_length=32)
+    name = models.CharField(max_length=200)
+    amount = models.DecimalField(max_digits=18, decimal_places=6)
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+    interval = models.CharField(max_length=8, choices=[(i.value, i.value) for i in Interval])
+
+    class Meta:
+        db_table = "plans"
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "code"], name="uq_plan_tenant_code")
+        ]
+
+
+class Customer(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="customers")
+    name = models.CharField(max_length=200)
+    email = models.EmailField()
+    stripe_customer_id = models.CharField(max_length=64, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "customers"
+
+
+class Subscription(models.Model):
+    """Billed in advance. Due when `billed_through` is null or in the past; the next
+    invoice covers [billed_through or started_at, + plan.interval)."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="subscriptions")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="subscriptions")
+    plan = models.ForeignKey(Plan, on_delete=models.PROTECT, related_name="subscriptions")
+    status = models.CharField(
+        max_length=16,
+        choices=[(s.value, s.value) for s in SubscriptionStatus],
+        default=SubscriptionStatus.ACTIVE.value,
+    )
+    started_at = models.DateTimeField()
+    billed_through = models.DateTimeField(null=True, blank=True)
+    canceled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "subscriptions"
+        indexes = [models.Index(fields=["status", "billed_through"], name="ix_subs_due")]
+
+    def apply(self, event: Event) -> None:
+        """Advance the state machine; raises InvalidTransition for anything not in the table."""
+        self.status = transition(SubscriptionStatus(self.status), event).value
+
+
+class Invoice(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="invoices")
+    subscription = models.ForeignKey(
+        Subscription, on_delete=models.PROTECT, related_name="invoices"
+    )
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="invoices")
+    period_start = models.DateTimeField()
+    period_end = models.DateTimeField()
+    amount = models.DecimalField(max_digits=18, decimal_places=6)
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+    status = models.CharField(
+        max_length=8,
+        choices=[(s.value, s.value) for s in InvoiceStatus],
+        default=InvoiceStatus.OPEN.value,
+    )
+    issued_at = models.DateTimeField()
+    paid_at = models.DateTimeField(null=True, blank=True)
+    # Nullable only because the entry's source_id is the invoice id: the row is created,
+    # the entry posted, the link set, all in one transaction. Never observed null.
+    issue_entry = models.OneToOneField(
+        JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    payment_entry = models.OneToOneField(
+        JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    stripe_payment_intent_id = models.CharField(max_length=64, null=True, blank=True, unique=True)
+
+    class Meta:
+        db_table = "invoices"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["subscription", "period_start"], name="uq_invoice_subscription_period"
+            )
+        ]
+
+
+class InvoiceLine(models.Model):
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="lines")
+    description = models.CharField(max_length=200)
+    amount = models.DecimalField(max_digits=18, decimal_places=6)
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+
+    class Meta:
+        db_table = "invoice_lines"
