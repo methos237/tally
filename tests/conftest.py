@@ -1,15 +1,28 @@
 import os
 from collections import defaultdict
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 from hypothesis import settings
 
-from tally.adapters.models import Account, AccountBalance, JournalLine, Tenant
+from tally.adapters.models import (
+    Account,
+    AccountBalance,
+    Customer,
+    JournalLine,
+    Plan,
+    Subscription,
+    Tenant,
+)
 
 settings.register_profile("ci", max_examples=1000, deadline=None)
 settings.register_profile("dev", max_examples=100)
 settings.load_profile("ci" if os.environ.get("CI") else "dev")
+
+LIVE_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
+NOW = datetime(2026, 2, 1, 9, tzinfo=UTC)
+
 
 Ledger = tuple[Tenant, Account, Account]
 
@@ -45,3 +58,29 @@ def fold_from_journal(tenant: Tenant | None = None) -> dict[int, Decimal]:
 def projection(tenant: Tenant | None = None) -> dict[int, Decimal]:
     rows = AccountBalance.objects.filter(tenant=tenant) if tenant else AccountBalance.objects.all()
     return {b.account_id: b.balance for b in rows}
+
+
+def balance(tenant_id: int, code: str) -> Decimal:
+    """One account's balance straight from the journal."""
+    account = Account.objects.get(tenant_id=tenant_id, code=code)
+    return fold_from_journal(account.tenant).get(account.id, Decimal(0))
+
+
+@pytest.fixture
+def subscription(tenant: Tenant) -> Subscription:
+    """An active monthly subscription that has never been billed, with the three billing
+    accounts (1000 cash, 1200 receivable, 4000 revenue) on the tenant."""
+    chart_for(tenant)
+    Account.objects.create(tenant=tenant, code="1000", name="Cash", type="asset", currency="USD")
+    plan = Plan.objects.create(
+        tenant=tenant,
+        code="pro",
+        name="Pro",
+        amount=Decimal("49.00"),
+        currency="USD",
+        interval="month",
+    )
+    customer = Customer.objects.create(tenant=tenant, name="Wile E.", email="wile@acme.test")
+    return Subscription.objects.create(
+        tenant=tenant, customer=customer, plan=plan, started_at=datetime(2026, 1, 31, tzinfo=UTC)
+    )

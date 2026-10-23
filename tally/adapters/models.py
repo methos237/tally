@@ -7,8 +7,10 @@ the triggers that enforce it and the deferred balancing check.
 from secrets import token_urlsafe
 
 from django.contrib.auth.hashers import check_password, make_password
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 
+from tally.domain.billing import Interval, InvoiceStatus, SubscriptionStatus
 from tally.domain.journal import AccountType
 from tally.domain.money import Currency
 
@@ -162,3 +164,150 @@ class IdempotencyRecord(models.Model):
             models.UniqueConstraint(fields=["tenant", "key"], name="uq_idempotency_tenant_key")
         ]
         indexes = [models.Index(fields=["created_at"], name="ix_idempotency_created")]
+
+
+class Plan(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="plans")
+    code = models.CharField(max_length=32)
+    name = models.CharField(max_length=200)
+    amount = models.DecimalField(max_digits=18, decimal_places=6)
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+    interval = models.CharField(max_length=8, choices=[(i.value, i.value) for i in Interval])
+
+    class Meta:
+        db_table = "plans"
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "code"], name="uq_plan_tenant_code")
+        ]
+
+
+class Customer(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="customers")
+    name = models.CharField(max_length=200)
+    email = models.EmailField()
+    stripe_customer_id = models.CharField(max_length=64, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "customers"
+
+
+class Subscription(models.Model):
+    """Billed in advance. Due when `billed_through` is null or in the past; the next
+    invoice covers [billed_through or started_at, + plan.interval)."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="subscriptions")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="subscriptions")
+    plan = models.ForeignKey(Plan, on_delete=models.PROTECT, related_name="subscriptions")
+    status = models.CharField(
+        max_length=16,
+        choices=[(s.value, s.value) for s in SubscriptionStatus],
+        default=SubscriptionStatus.ACTIVE.value,
+    )
+    started_at = models.DateTimeField()
+    billed_through = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "subscriptions"
+        indexes = [models.Index(fields=["status", "billed_through"], name="ix_subs_due")]
+
+
+class Invoice(models.Model):
+    """One billing period of one subscription. Its journal entries are found through the
+    journal's own (source_type, source_id) link, so the ledger stays the source of truth."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="invoices")
+    subscription = models.ForeignKey(
+        Subscription, on_delete=models.PROTECT, related_name="invoices"
+    )
+    description = models.CharField(max_length=200)
+    period_start = models.DateTimeField()
+    period_end = models.DateTimeField()
+    amount = models.DecimalField(max_digits=18, decimal_places=6)
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+    status = models.CharField(
+        max_length=8,
+        choices=[(s.value, s.value) for s in InvoiceStatus],
+        default=InvoiceStatus.OPEN.value,
+    )
+    issued_at = models.DateTimeField()
+    paid_at = models.DateTimeField(null=True, blank=True)
+    stripe_payment_intent_id = models.CharField(max_length=64, null=True, blank=True, unique=True)
+
+    class Meta:
+        db_table = "invoices"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["subscription", "period_start"], name="uq_invoice_subscription_period"
+            )
+        ]
+
+    def entry(self, source_type: str) -> "JournalEntry | None":
+        """The `invoice` (issue) or `payment` entry posted for this invoice."""
+        return JournalEntry.objects.filter(
+            tenant_id=self.tenant_id, source_type=source_type, source_id=str(self.id)
+        ).first()
+
+
+class StripeEvent(models.Model):
+    """Inbound webhook dedup: one row per Stripe event id. The webhook view inserts and
+    returns 200; a Celery task does the work and stamps processed_at."""
+
+    event_id = models.CharField(max_length=64, unique=True)
+    type = models.CharField(max_length=64)
+    payload = models.JSONField()
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "stripe_events"
+
+
+class WebhookEndpoint(models.Model):
+    """A tenant's receiver. The secret signs every delivery; it is returned once on
+    creation and stored in the clear because the sender has to use it."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="webhook_endpoints")
+    url = models.URLField(max_length=500)
+    secret = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    disabled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "webhook_endpoints"
+
+    @staticmethod
+    def new_secret() -> str:
+        return "whsec_" + token_urlsafe(32)
+
+
+class OutboxMessage(models.Model):
+    """One delivery per (event, endpoint), written in the business transaction.
+
+    `next_attempt_at` drives retries; after MAX_ATTEMPTS failures `dead_at` is set and
+    the message waits in the dead-letter list until redelivered by hand."""
+
+    MAX_ATTEMPTS = 5
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="+")
+    endpoint = models.ForeignKey(WebhookEndpoint, on_delete=models.PROTECT, related_name="outbox")
+    event_type = models.CharField(max_length=64)
+    payload = models.JSONField(encoder=DjangoJSONEncoder)  # Decimal and datetime become strings
+    created_at = models.DateTimeField(auto_now_add=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField()
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    dead_at = models.DateTimeField(null=True, blank=True)
+    last_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "webhook_outbox"
+        indexes = [
+            # Partial: only the rows the 10 s sweep can pick up, not the delivered history.
+            models.Index(
+                fields=["next_attempt_at"],
+                name="ix_outbox_due",
+                condition=models.Q(delivered_at__isnull=True, dead_at__isnull=True),
+            )
+        ]

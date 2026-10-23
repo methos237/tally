@@ -56,6 +56,11 @@ CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_BEAT_SCHEDULE = {
     "expire-idempotency": {"task": "tally.adapters.tasks.expire_idempotency", "schedule": 3600},
+    "bill-due-subscriptions": {
+        "task": "tally.adapters.tasks.bill_due_subscriptions",
+        "schedule": 60,
+    },
+    "deliver-due-webhooks": {"task": "tally.adapters.tasks.deliver_due_webhooks", "schedule": 10},
 }
 
 REST_FRAMEWORK = {
@@ -82,9 +87,12 @@ SPECTACULAR_SETTINGS = {
 TIME_ZONE = "UTC"
 USE_TZ = True
 
-STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
-STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_API_BASE = os.environ.get("STRIPE_API_BASE", "")  # set to stripe-mock in compose and CI
+# stripe-mock accepts any well-formed test key; against Stripe itself the env var is required.
+STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY") or (
+    "sk_test_stripemock" if STRIPE_API_BASE else ""
+)
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://localhost:9000")
 
 LOGGING_CONFIG = None  # structlog configured in tally.logging
