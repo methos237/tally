@@ -22,6 +22,14 @@ def test_minor_units(amount: str, currency: str, minor: int) -> None:
     assert stripe_gateway.minor_units(Money(Decimal(amount), Currency(currency))) == minor
 
 
+def test_idempotency_key_binds_the_row_to_the_exact_request() -> None:
+    a = stripe_gateway.idempotency_key("invoice", 1, {"amount": 4900, "currency": "usd"})
+    same = stripe_gateway.idempotency_key("invoice", 1, {"currency": "usd", "amount": 4900})
+    other = stripe_gateway.idempotency_key("invoice", 1, {"amount": 1234, "currency": "usd"})
+    assert a == same and a != other
+    assert a.startswith("tally-invoice-1-") and len(a) <= 255
+
+
 @pytest.mark.django_db
 def test_customer_is_created_once_and_its_id_kept(subscription: Subscription) -> None:
     first = stripe_gateway.ensure_customer(subscription.customer)
