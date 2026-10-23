@@ -6,7 +6,10 @@ idempotency key per call so a retried task cannot charge twice, and the Stripe i
 stored on our rows before confirmation so a webhook always resolves to an invoice.
 """
 
+import hashlib
+import json
 from functools import cache
+from typing import Any
 
 import stripe
 from django.conf import settings
@@ -28,6 +31,16 @@ def client() -> stripe.StripeClient:
     )
 
 
+def idempotency_key(kind: str, row_id: int, params: dict[str, Any]) -> str:
+    """`tally-invoice-7-create-3f9c…`: the row plus a digest of the exact request.
+
+    A retry of the same call reuses the key; a different request for the same row id
+    (another database sharing the Stripe account, a changed amount) gets a new key
+    instead of Stripe's "key already used with different parameters" error."""
+    digest = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:12]
+    return f"tally-{kind}-{row_id}-{digest}"
+
+
 def minor_units(money: Money) -> int:
     """49.00 USD -> 4900; 1000 JPY -> 1000. Exact by construction: Money is quantized."""
     return int(money.amount.scaleb(money.currency.exponent))
@@ -37,16 +50,14 @@ def ensure_customer(customer: models.Customer) -> str:
     """The Stripe customer id for this customer, created on first use."""
     if customer.stripe_customer_id:
         return customer.stripe_customer_id
+    params: dict[str, Any] = {
+        "name": customer.name,
+        "email": customer.email,
+        "metadata": {"tally_customer_id": str(customer.id), "tenant_id": str(customer.tenant_id)},
+    }
     created = client().v1.customers.create(
-        params={
-            "name": customer.name,
-            "email": customer.email,
-            "metadata": {
-                "tally_customer_id": str(customer.id),
-                "tenant_id": str(customer.tenant_id),
-            },
-        },
-        options={"idempotency_key": f"tally-customer-{customer.id}"},
+        params=params,  # type: ignore[arg-type]
+        options={"idempotency_key": idempotency_key("customer", customer.id, params)},
     )
     customer.stripe_customer_id = created.id
     customer.save(update_fields=["stripe_customer_id"])
@@ -62,23 +73,25 @@ def collect(invoice: models.Invoice) -> stripe.PaymentIntent:
     Off session, dynamic payment methods with redirects disabled (no return_url).
     """
     money = Money(invoice.amount, Currency(invoice.currency))
+    create: dict[str, Any] = {
+        "amount": minor_units(money),
+        "currency": money.currency.value.lower(),
+        "customer": ensure_customer(invoice.subscription.customer),
+        "automatic_payment_methods": {"enabled": True, "allow_redirects": "never"},
+        "description": f"Tally invoice {invoice.id}",
+        "metadata": {"tally_invoice_id": str(invoice.id)},
+    }
     intent = client().v1.payment_intents.create(
-        params={
-            "amount": minor_units(money),
-            "currency": money.currency.value.lower(),
-            "customer": ensure_customer(invoice.subscription.customer),
-            "automatic_payment_methods": {"enabled": True, "allow_redirects": "never"},
-            "description": f"Tally invoice {invoice.id}",
-            "metadata": {"tally_invoice_id": str(invoice.id)},
-        },
-        options={"idempotency_key": f"tally-invoice-{invoice.id}-create"},
+        params=create,  # type: ignore[arg-type]
+        options={"idempotency_key": idempotency_key("invoice", invoice.id, create)},
     )
     invoice.stripe_payment_intent_id = intent.id
     invoice.save(update_fields=["stripe_payment_intent_id"])
+    confirm: dict[str, Any] = {"payment_method": TEST_CARD, "off_session": True}
     return client().v1.payment_intents.confirm(
         intent.id,
-        params={"payment_method": TEST_CARD, "off_session": True},
-        options={"idempotency_key": f"tally-invoice-{invoice.id}-confirm"},
+        params=confirm,  # type: ignore[arg-type]
+        options={"idempotency_key": idempotency_key("confirm", invoice.id, confirm)},
     )
 
 
