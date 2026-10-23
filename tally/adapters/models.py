@@ -260,3 +260,17 @@ class InvoiceLine(models.Model):
 
     class Meta:
         db_table = "invoice_lines"
+
+
+class StripeEvent(models.Model):
+    """Inbound webhook dedup: one row per Stripe event id. The webhook view inserts and
+    returns 200; a Celery task does the work and stamps processed_at."""
+
+    event_id = models.CharField(max_length=64, unique=True)
+    type = models.CharField(max_length=64)
+    payload = models.JSONField()
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "stripe_events"

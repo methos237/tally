@@ -72,3 +72,9 @@ def collect(invoice: models.Invoice, payment_method: str = TEST_CARD) -> stripe.
     invoice.stripe_payment_intent_id = intent.id
     invoice.save(update_fields=["stripe_payment_intent_id"])
     return intent
+
+
+def verify(payload: bytes, signature: str | None) -> stripe.Event:
+    """Check Stripe-Signature (HMAC-SHA256 over `t.payload`, timestamp within 300 s).
+    Raises ValueError on a bad body, stripe.SignatureVerificationError on a bad header."""
+    return client().construct_event(payload, signature, settings.STRIPE_WEBHOOK_SECRET)

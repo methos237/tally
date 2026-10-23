@@ -6,7 +6,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from tally.adapters import billing, stripe_gateway
-from tally.adapters.models import IdempotencyRecord, Invoice, Subscription
+from tally.adapters.models import IdempotencyRecord, Invoice, StripeEvent, Subscription
 from tally.domain.billing import InvoiceStatus, SubscriptionStatus
 
 IDEMPOTENCY_TTL = timedelta(hours=24)
@@ -56,3 +56,26 @@ def collect_invoice(invoice_id: int) -> str:
     if intent.status == "succeeded":
         billing.mark_paid(invoice.id, timezone.now())
     return intent.status
+
+
+@shared_task
+def process_stripe_event(row_id: int) -> str:
+    """Apply one verified, deduplicated Stripe event. Returns what was done."""
+    row = StripeEvent.objects.get(id=row_id)
+    if row.processed_at is not None:
+        return "already processed"
+    intent_id = row.payload["data"]["object"]["id"]
+    invoice = Invoice.objects.filter(stripe_payment_intent_id=intent_id).first()
+    if invoice is None:
+        outcome = f"no invoice for {intent_id}"  # e.g. a `stripe trigger` fixture; nothing to book
+    elif row.type == "payment_intent.succeeded":
+        billing.mark_paid(invoice.id, timezone.now())
+        outcome = f"invoice {invoice.id} paid"
+    elif row.type == "payment_intent.payment_failed":
+        billing.mark_failed(invoice.id)
+        outcome = f"invoice {invoice.id} payment failed"
+    else:
+        outcome = f"ignored {row.type}"
+    row.processed_at = timezone.now()
+    row.save(update_fields=["processed_at"])
+    return outcome

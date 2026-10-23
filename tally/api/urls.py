@@ -1,7 +1,7 @@
 from django.urls import path
 from drf_spectacular.views import SpectacularJSONAPIView, SpectacularRedocView
 
-from tally.api import views
+from tally.api import views, webhooks
 
 urlpatterns = [
     path("health", views.health, name="health"),
@@ -13,4 +13,5 @@ urlpatterns = [
     path("api/entries/<int:entry_id>/reverse", views.EntryReverse.as_view(), name="entry-reverse"),
     path("api/accounts", views.AccountList.as_view(), name="accounts"),
     path("api/accounts/<str:code>/balance", views.AccountBalanceView.as_view(), name="balance"),
+    path("webhooks/stripe", webhooks.stripe_webhook, name="stripe-webhook"),
 ]
