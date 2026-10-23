@@ -10,7 +10,8 @@
 set -eu
 PORT="${PORT:-8001}"
 case "${1:-listen}" in
-  listen)  exec stripe listen --forward-to "localhost:${PORT}/webhooks/stripe" ;;
+  listen)  exec stripe listen --events payment_intent.succeeded,payment_intent.payment_failed \
+             --forward-to "localhost:${PORT}/webhooks/stripe" ;;
   trigger) exec stripe trigger payment_intent.succeeded ;;
   *) echo "usage: $0 [listen|trigger]" >&2; exit 2 ;;
 esac
