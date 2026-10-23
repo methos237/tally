@@ -16,7 +16,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from tally.adapters import models
+from tally.adapters import models, outbox
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.api import serializers
 from tally.api.auth import tenant_of
@@ -199,3 +199,57 @@ class AccountBalanceView(APIView):
             {"account": code, "currency": account.currency, "balance": balance, "as_of": as_of}
         )
         return Response(out.data)
+
+
+class WebhookEndpointList(generics.ListAPIView[models.WebhookEndpoint]):
+    serializer_class = serializers.WebhookEndpointOut
+    pagination_class = None
+
+    def get_queryset(self) -> QuerySet[models.WebhookEndpoint]:
+        return models.WebhookEndpoint.objects.filter(tenant_id=tenant_of(self.request).id).order_by(
+            "id"
+        )
+
+    @extend_schema(
+        request=serializers.WebhookEndpointIn, responses={201: serializers.WebhookEndpointCreated}
+    )
+    @idempotent
+    def post(self, request: Request) -> Response:
+        body = serializers.WebhookEndpointIn(data=request.data)
+        body.is_valid(raise_exception=True)
+        endpoint = models.WebhookEndpoint.objects.create(
+            tenant_id=tenant_of(request).id,
+            url=body.validated_data["url"],
+            secret=models.WebhookEndpoint.new_secret(),
+        )
+        return Response(
+            serializers.WebhookEndpointCreated(endpoint).data, status=status.HTTP_201_CREATED
+        )
+
+
+def endpoint_row(tenant_id: int, endpoint_id: int) -> models.WebhookEndpoint:
+    row = models.WebhookEndpoint.objects.filter(tenant_id=tenant_id, id=endpoint_id).first()
+    if row is None:
+        raise Problem(404, f"webhook endpoint {endpoint_id} not found")
+    return row
+
+
+class DeadLetterList(generics.ListAPIView[models.OutboxMessage]):
+    serializer_class = serializers.DeadLetterOut
+    pagination_class = None
+
+    def get_queryset(self) -> QuerySet[models.OutboxMessage]:
+        endpoint = endpoint_row(tenant_of(self.request).id, self.kwargs["endpoint_id"])
+        return endpoint.outbox.filter(dead_at__isnull=False).order_by("dead_at")
+
+
+class DeadLetterRedeliver(APIView):
+    @extend_schema(request=None, responses={202: serializers.DeadLetterOut})
+    @idempotent
+    def post(self, request: Request, endpoint_id: int, message_id: int) -> Response:
+        endpoint = endpoint_row(tenant_of(request).id, endpoint_id)
+        message = endpoint.outbox.filter(id=message_id, dead_at__isnull=False).first()
+        if message is None:
+            raise Problem(404, f"dead letter {message_id} not found on endpoint {endpoint_id}")
+        outbox.redeliver(message)
+        return Response(serializers.DeadLetterOut(message).data, status=status.HTTP_202_ACCEPTED)

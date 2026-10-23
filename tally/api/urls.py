@@ -13,5 +13,16 @@ urlpatterns = [
     path("api/entries/<int:entry_id>/reverse", views.EntryReverse.as_view(), name="entry-reverse"),
     path("api/accounts", views.AccountList.as_view(), name="accounts"),
     path("api/accounts/<str:code>/balance", views.AccountBalanceView.as_view(), name="balance"),
+    path("api/webhook-endpoints", views.WebhookEndpointList.as_view(), name="webhook-endpoints"),
+    path(
+        "api/webhook-endpoints/<int:endpoint_id>/dead-letters",
+        views.DeadLetterList.as_view(),
+        name="dead-letters",
+    ),
+    path(
+        "api/webhook-endpoints/<int:endpoint_id>/dead-letters/<int:message_id>/redeliver",
+        views.DeadLetterRedeliver.as_view(),
+        name="dead-letter-redeliver",
+    ),
     path("webhooks/stripe", webhooks.stripe_webhook, name="stripe-webhook"),
 ]

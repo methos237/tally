@@ -5,8 +5,14 @@ from django.db import IntegrityError
 from django.db.models import Q
 from django.utils import timezone
 
-from tally.adapters import billing, stripe_gateway
-from tally.adapters.models import IdempotencyRecord, Invoice, StripeEvent, Subscription
+from tally.adapters import billing, outbox, stripe_gateway
+from tally.adapters.models import (
+    IdempotencyRecord,
+    Invoice,
+    OutboxMessage,
+    StripeEvent,
+    Subscription,
+)
 from tally.domain.billing import InvoiceStatus, SubscriptionStatus
 
 IDEMPOTENCY_TTL = timedelta(hours=24)
@@ -79,3 +85,16 @@ def process_stripe_event(row_id: int) -> str:
     row.processed_at = timezone.now()
     row.save(update_fields=["processed_at"])
     return outcome
+
+
+@shared_task
+def deliver_due_webhooks() -> int:
+    """Send every outbox message whose time has come. Returns deliveries that succeeded."""
+    due = (
+        OutboxMessage.objects.filter(
+            delivered_at__isnull=True, dead_at__isnull=True, next_attempt_at__lte=timezone.now()
+        )
+        .select_related("endpoint")
+        .order_by("next_attempt_at")
+    )
+    return sum(outbox.attempt(message) for message in due)

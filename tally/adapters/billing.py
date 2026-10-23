@@ -9,7 +9,7 @@ from datetime import datetime
 
 from django.db import transaction
 
-from tally.adapters import models
+from tally.adapters import models, outbox
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import PostEntry
 from tally.domain.billing import (
@@ -84,7 +84,21 @@ def issue_invoice(subscription: models.Subscription, now: datetime) -> models.In
         invoice.save(update_fields=["issue_entry"])
         subscription.billed_through = end
         subscription.save(update_fields=["billed_through"])
+        outbox.publish(invoice.tenant_id, "invoice.issued", invoice_event(invoice))
     return invoice
+
+
+def invoice_event(invoice: models.Invoice) -> dict[str, object]:
+    return {
+        "invoice_id": invoice.id,
+        "subscription_id": invoice.subscription_id,
+        "customer_id": invoice.customer_id,
+        "status": invoice.status,
+        "amount": invoice.amount,
+        "currency": invoice.currency,
+        "period_start": invoice.period_start,
+        "period_end": invoice.period_end,
+    }
 
 
 def mark_paid(invoice_id: int, now: datetime) -> models.Invoice:
@@ -109,6 +123,7 @@ def mark_paid(invoice_id: int, now: datetime) -> models.Invoice:
         invoice.payment_entry_id = entry.id
         invoice.save(update_fields=["status", "paid_at", "payment_entry"])
         apply_to_subscription(invoice.subscription_id, Event.PAYMENT_SUCCEEDED)
+        outbox.publish(invoice.tenant_id, "invoice.paid", invoice_event(invoice))
     return invoice
 
 
@@ -122,8 +137,15 @@ def apply_to_subscription(subscription_id: int, event: Event) -> None:
     caller; a canceled subscription simply stays canceled."""
     with transaction.atomic():
         subscription = models.Subscription.objects.select_for_update().get(id=subscription_id)
+        before = subscription.status
         try:
             subscription.apply(event)
         except InvalidTransition:
             return
         subscription.save(update_fields=["status"])
+        if subscription.status != before:
+            outbox.publish(
+                subscription.tenant_id,
+                f"subscription.{subscription.status}",
+                {"subscription_id": subscription.id, "status": subscription.status},
+            )

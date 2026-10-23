@@ -274,3 +274,46 @@ class StripeEvent(models.Model):
 
     class Meta:
         db_table = "stripe_events"
+
+
+class WebhookEndpoint(models.Model):
+    """A tenant's receiver. The secret signs every delivery; it is returned once on
+    creation and stored in the clear because the sender has to use it."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="webhook_endpoints")
+    url = models.URLField(max_length=500)
+    secret = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    disabled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "webhook_endpoints"
+
+    @staticmethod
+    def new_secret() -> str:
+        return "whsec_" + token_urlsafe(32)
+
+
+class OutboxMessage(models.Model):
+    """One delivery per (event, endpoint), written in the business transaction.
+
+    `next_attempt_at` drives retries; after MAX_ATTEMPTS failures `dead_at` is set and
+    the message waits in the dead-letter list until redelivered by hand."""
+
+    MAX_ATTEMPTS = 5
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="+")
+    endpoint = models.ForeignKey(WebhookEndpoint, on_delete=models.PROTECT, related_name="outbox")
+    event_type = models.CharField(max_length=64)
+    payload = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField()
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    dead_at = models.DateTimeField(null=True, blank=True)
+    last_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "webhook_outbox"
+        indexes = [models.Index(fields=["next_attempt_at"], name="ix_outbox_due")]

@@ -60,6 +60,7 @@ CELERY_BEAT_SCHEDULE = {
         "task": "tally.adapters.tasks.bill_due_subscriptions",
         "schedule": 60,
     },
+    "deliver-due-webhooks": {"task": "tally.adapters.tasks.deliver_due_webhooks", "schedule": 10},
 }
 
 REST_FRAMEWORK = {

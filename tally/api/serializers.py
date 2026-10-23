@@ -77,3 +77,35 @@ class BalanceOut(serializers.Serializer[Any]):
     currency = serializers.CharField()
     balance = AmountField()
     as_of = serializers.DateTimeField(allow_null=True)
+
+
+class WebhookEndpointIn(serializers.Serializer[Any]):
+    url = serializers.URLField(max_length=500)
+
+
+class WebhookEndpointOut(serializers.ModelSerializer[models.WebhookEndpoint]):
+    class Meta:
+        model = models.WebhookEndpoint
+        fields = ["id", "url", "created_at", "disabled_at"]
+
+
+class WebhookEndpointCreated(WebhookEndpointOut):
+    """The secret appears here and nowhere else."""
+
+    class Meta(WebhookEndpointOut.Meta):
+        fields = [*WebhookEndpointOut.Meta.fields, "secret"]
+
+
+class DeadLetterOut(serializers.ModelSerializer[models.OutboxMessage]):
+    class Meta:
+        model = models.OutboxMessage
+        fields = [
+            "id",
+            "event_type",
+            "payload",
+            "created_at",
+            "attempts",
+            "last_status",
+            "last_error",
+            "dead_at",
+        ]
