@@ -1,4 +1,5 @@
-"""Deterministic demo data: two tenants, a 12-account chart each, 400 entries over 90 days.
+"""Deterministic demo data: two tenants, a 12-account chart each, 400 entries over 90 days,
+3 plans, 10 customers and a dozen subscriptions per tenant invoiced through the demo date.
 
 Everything goes through PostEntry, so the projection is exercised the same way
 the API will exercise it. Re-running is a no-op once the tenants exist; the
@@ -13,7 +14,8 @@ from typing import Any
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from tally.adapters.models import Account, Tenant
+from tally.adapters import billing
+from tally.adapters.models import Account, Customer, Plan, Subscription, Tenant
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import PostEntry
 from tally.domain.journal import JournalEntry, Line
@@ -23,6 +25,14 @@ TENANTS = ["Acme Corp", "Globex"]
 START = datetime(2026, 7, 24, tzinfo=UTC)  # 90 days before the demo date
 DAYS = 90
 ENTRIES = 400
+DEMO_DATE = START + timedelta(days=DAYS)
+PLANS = [
+    ("starter", "Starter", "19.00", "month"),
+    ("pro", "Pro", "49.00", "month"),
+    ("scale", "Scale", "499.00", "year"),
+]
+CUSTOMERS = 10
+SUBSCRIPTIONS = {"Acme Corp": 13, "Globex": 12}
 
 CHART = [
     ("1000", "Cash", "asset"),
@@ -96,4 +106,53 @@ class Command(BaseCommand):
                             ),
                         )
                     )
-            self.stdout.write(f"{name}: {len(CHART)} accounts, {ENTRIES + 1} entries")
+            invoices, paid = self.seed_billing(tenant, SUBSCRIPTIONS[name], rng)
+            self.stdout.write(
+                f"{name}: {len(CHART)} accounts, {ENTRIES + 1} entries, "
+                f"{invoices} invoices ({paid} paid)"
+            )
+
+    def seed_billing(self, tenant: Tenant, count: int, rng: random.Random) -> tuple[int, int]:
+        """Subscriptions started over the 90 days, every elapsed period invoiced; most
+        invoices paid, a few left open, one failed so a past_due subscription exists."""
+        plans = [
+            Plan.objects.create(
+                tenant=tenant,
+                code=code,
+                name=label,
+                amount=Decimal(amount),
+                currency="USD",
+                interval=interval,
+            )
+            for code, label, amount, interval in PLANS
+        ]
+        customers = [
+            Customer.objects.create(
+                tenant=tenant,
+                name=f"Customer {n:02d}",
+                email=f"billing{n:02d}@{tenant.name.split()[0].lower()}.test",
+            )
+            for n in range(1, CUSTOMERS + 1)
+        ]
+        invoices = paid = 0
+        for n in range(count):
+            started = START + timedelta(days=rng.randint(0, DAYS - 1), hours=rng.randint(8, 18))
+            subscription = Subscription.objects.create(
+                tenant=tenant,
+                customer=rng.choice(customers),
+                plan=rng.choice(plans),
+                started_at=started,
+            )
+            while (subscription.billed_through or started) <= DEMO_DATE:
+                invoice = billing.issue_invoice(
+                    subscription, subscription.billed_through or started
+                )
+                invoices += 1
+                if n == 0 and invoice.period_end > DEMO_DATE:
+                    billing.mark_failed(invoice.id)  # the one past_due subscription
+                elif rng.random() < 0.85 or invoice.period_end <= DEMO_DATE:
+                    billing.mark_paid(
+                        invoice.id, invoice.issued_at + timedelta(days=rng.randint(0, 3))
+                    )
+                    paid += 1
+        return invoices, paid
