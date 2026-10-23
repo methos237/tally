@@ -56,6 +56,10 @@ CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_BEAT_SCHEDULE = {
     "expire-idempotency": {"task": "tally.adapters.tasks.expire_idempotency", "schedule": 3600},
+    "bill-due-subscriptions": {
+        "task": "tally.adapters.tasks.bill_due_subscriptions",
+        "schedule": 60,
+    },
 }
 
 REST_FRAMEWORK = {
