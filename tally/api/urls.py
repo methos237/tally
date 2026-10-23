@@ -1,7 +1,7 @@
 from django.urls import path
 from drf_spectacular.views import SpectacularJSONAPIView, SpectacularRedocView
 
-from tally.api import views, webhooks
+from tally.api import reconciliation, views, webhooks
 
 urlpatterns = [
     path("health", views.health, name="health"),
@@ -23,6 +23,27 @@ urlpatterns = [
         "api/webhook-endpoints/<int:endpoint_id>/dead-letters/<int:message_id>/redeliver",
         views.DeadLetterRedeliver.as_view(),
         name="dead-letter-redeliver",
+    ),
+    path("api/statements", reconciliation.StatementList.as_view(), name="statements"),
+    path(
+        "api/statements/<int:statement_id>",
+        reconciliation.StatementDetail.as_view(),
+        name="statement",
+    ),
+    path(
+        "api/statements/<int:statement_id>/reconcile",
+        reconciliation.StatementReconcile.as_view(),
+        name="statement-reconcile",
+    ),
+    path(
+        "api/reconciliation-exceptions",
+        reconciliation.ExceptionList.as_view(),
+        name="reconciliation-exceptions",
+    ),
+    path(
+        "api/reconciliation-exceptions/<int:exception_id>/resolve",
+        reconciliation.ExceptionResolve.as_view(),
+        name="reconciliation-exception-resolve",
     ),
     path("webhooks/stripe", webhooks.stripe_webhook, name="stripe-webhook"),
 ]
