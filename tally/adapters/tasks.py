@@ -5,9 +5,9 @@ from django.db import IntegrityError
 from django.db.models import Q
 from django.utils import timezone
 
-from tally.adapters import billing
-from tally.adapters.models import IdempotencyRecord, Subscription
-from tally.domain.billing import SubscriptionStatus
+from tally.adapters import billing, stripe_gateway
+from tally.adapters.models import IdempotencyRecord, Invoice, Subscription
+from tally.domain.billing import InvoiceStatus, SubscriptionStatus
 
 IDEMPOTENCY_TTL = timedelta(hours=24)
 
@@ -36,8 +36,23 @@ def bill_due_subscriptions() -> int:
     issued = 0
     for subscription in due:
         try:
-            billing.issue_invoice(subscription, now)
+            invoice = billing.issue_invoice(subscription, now)
         except IntegrityError:
             continue  # an overlapping run already invoiced this period
         issued += 1
+        collect_invoice.delay(invoice.id)
     return issued
+
+
+@shared_task
+def collect_invoice(invoice_id: int) -> str:
+    """Charge an open invoice through Stripe. Returns the PaymentIntent status. The
+    webhook normally marks the invoice paid; a synchronous success is applied here too,
+    and mark_paid is idempotent so both paths can run."""
+    invoice = Invoice.objects.select_related("customer").get(id=invoice_id)
+    if invoice.status != InvoiceStatus.OPEN:
+        return invoice.status
+    intent = stripe_gateway.collect(invoice)
+    if intent.status == "succeeded":
+        billing.mark_paid(invoice.id, timezone.now())
+    return intent.status

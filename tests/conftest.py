@@ -20,6 +20,17 @@ settings.register_profile("ci", max_examples=1000, deadline=None)
 settings.register_profile("dev", max_examples=100)
 settings.load_profile("ci" if os.environ.get("CI") else "dev")
 
+LIVE_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """`live` tests hit Stripe test mode and are skipped without a key."""
+    skip = pytest.mark.skip(reason="STRIPE_TEST_SECRET_KEY not set")
+    for item in items:
+        if "live" in item.keywords and not LIVE_KEY:
+            item.add_marker(skip)
+
+
 Ledger = tuple[Tenant, Account, Account]
 
 
