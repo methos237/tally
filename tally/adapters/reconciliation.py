@@ -21,8 +21,23 @@ from tally.domain.journal import JournalEntry, Line
 from tally.domain.money import Currency, Money
 from tally.domain.reconciliation import WINDOW_DAYS, LedgerItem, StatementLine, match
 
-BANK = {"Date", "Description", "Reference", "Amount"}
-PROCESSOR = {"id", "created", "amount", "currency", "description"}
+# column per field; None means the layout has no such column
+LAYOUTS: dict[str, dict[str, str | None]] = {
+    "bank": {
+        "occurred_on": "Date",
+        "amount": "Amount",
+        "reference": "Reference",
+        "description": "Description",
+        "currency": None,
+    },
+    "processor": {
+        "occurred_on": "created",
+        "amount": "amount",
+        "reference": "id",
+        "description": "description",
+        "currency": "currency",
+    },
+}
 
 
 class BadStatement(ValueError):
@@ -38,45 +53,31 @@ class Row(NamedTuple):
 
 
 def parse(text: str, default_currency: str) -> tuple[str, list[Row]]:
-    """(source, rows); `default_currency` applies to the bank layout, which has none."""
+    """(source, rows); `default_currency` applies to a layout without a currency column."""
     reader = csv.DictReader(io.StringIO(text))
     header = set(reader.fieldnames or [])
-    if header >= BANK:
-        source, on, amount, reference, description, currency = (
-            "bank",
-            "Date",
-            "Amount",
-            "Reference",
-            "Description",
-            "",
-        )
-    elif header >= PROCESSOR:
-        source, on, amount, reference, description, currency = (
-            "processor",
-            "created",
-            "amount",
-            "id",
-            "description",
-            "currency",
-        )
-    else:
+    source = next(
+        (name for name, cols in LAYOUTS.items() if header >= {c for c in cols.values() if c}),
+        None,
+    )
+    if source is None:
         raise BadStatement(f"unknown CSV layout: columns {sorted(header)}")
+    col = LAYOUTS[source]
     rows: list[Row] = []
     for n, raw in enumerate(reader, start=1):
         try:
+            currency = raw[col["currency"]].strip().upper() if col["currency"] else default_currency
             rows.append(
                 Row(
-                    date.fromisoformat(raw[on].strip()[:10]),
-                    Decimal(raw[amount].strip()),
-                    raw[currency].strip().upper() if currency else default_currency,
-                    raw[reference].strip(),
-                    raw[description].strip(),
+                    date.fromisoformat(raw[col["occurred_on"] or ""].strip()[:10]),
+                    Decimal(raw[col["amount"] or ""].strip()),
+                    Currency(currency).value,
+                    raw[col["reference"] or ""].strip(),
+                    raw[col["description"] or ""].strip(),
                 )
             )
-        except (KeyError, ValueError, InvalidOperation, AttributeError) as exc:
+        except (ValueError, InvalidOperation, AttributeError) as exc:
             raise BadStatement(f"line {n}: {exc}") from exc
-        if rows[-1].currency not in Currency.__members__:
-            raise BadStatement(f"line {n}: unknown currency {rows[-1].currency}")
     if not rows:
         raise BadStatement("no lines")
     return source, rows
@@ -103,14 +104,15 @@ def import_statement(tenant_id: int, text: str) -> models.Statement:
 
 def ledger_items(statement: models.Statement) -> tuple[LedgerItem, ...]:
     """Cash movements in the statement window not yet matched by any statement line.
-    References: the entry's source id plus, for payments, the Stripe intent id."""
+    References: the entry's source id plus, for invoice payments, the Stripe intent id."""
     window = timedelta(days=WINDOW_DAYS)
+    since, until = statement.period_start - window, statement.period_end + window
     lines = (
         models.JournalLine.objects.filter(
             tenant_id=statement.tenant_id,
             account__code=billing.CASH,
-            entry__occurred_at__date__gte=statement.period_start - window,
-            entry__occurred_at__date__lte=statement.period_end + window,
+            entry__occurred_at__date__gte=since,
+            entry__occurred_at__date__lte=until,
         )
         .exclude(
             entry_id__in=models.StatementLine.objects.filter(
@@ -119,17 +121,14 @@ def ledger_items(statement: models.Statement) -> tuple[LedgerItem, ...]:
         )
         .select_related("entry")
     )
-    payment_ids = [
-        line.entry.source_id
-        for line in lines
-        if line.entry.source_type == "payment" and line.entry.source_id.isdigit()
-    ]  # invoice payments; other "payment" sources (seeded, imported) have no intent
+    # Invoice.entry("payment") is (tenant, "payment", str(invoice.id)); invert that here.
     intents: dict[str, str] = {
         str(invoice_id): str(intent)
         for invoice_id, intent in models.Invoice.objects.filter(
             tenant_id=statement.tenant_id,
-            id__in=payment_ids,
             stripe_payment_intent_id__isnull=False,
+            paid_at__date__gte=since,
+            paid_at__date__lte=until,
         ).values_list("id", "stripe_payment_intent_id")
     }
     items = []
@@ -159,20 +158,21 @@ def reconcile(statement: models.Statement, now: datetime) -> models.Statement:
             )
             for row in pending
         )
-        matches, exceptions = match(domain_lines, ledger_items(statement))
+        matches, unplaced = match(domain_lines, ledger_items(statement))
+        # ponytail: one UPDATE per match and 3 queries per exception; bulk them if statements grow
         for m in matches:
             models.StatementLine.objects.filter(id=m.line_id).update(
                 matched_entry_id=m.entry_id, match_rule=m.rule.value
             )
-        for e in exceptions:
+        for u in unplaced:
             row = models.ReconciliationException.objects.create(
                 tenant_id=statement.tenant_id,
                 statement=statement,
-                line_id=e.line_id,
-                reason=e.reason.value,
-                difference=e.difference.amount,
-                currency=e.difference.currency.value,
-                entry_id=e.entry_id,
+                line_id=u.line_id,
+                reason=u.reason.value,
+                difference=u.difference.amount,
+                currency=u.difference.currency.value,
+                entry_id=u.entry_id,
             )
             outbox.publish(
                 statement.tenant_id,
@@ -180,7 +180,7 @@ def reconcile(statement: models.Statement, now: datetime) -> models.Statement:
                 {
                     "exception_id": row.id,
                     "statement_id": statement.id,
-                    "line_id": e.line_id,
+                    "line_id": u.line_id,
                     "reason": row.reason,
                     "difference": row.difference,
                     "currency": row.currency,
@@ -199,7 +199,8 @@ def settle(statement: models.Statement, now: datetime) -> None:
 
 
 def adjust(exception: models.ReconciliationException, account_code: str, now: datetime) -> None:
-    """Resolve by posting the difference: cash against `account_code`."""
+    """Resolve by posting the difference: cash against `account_code`.
+    Raises LookupError(account_code) when the tenant has no such account."""
     with transaction.atomic():
         accounts = dict(
             models.Account.objects.filter(
@@ -207,7 +208,7 @@ def adjust(exception: models.ReconciliationException, account_code: str, now: da
             ).values_list("code", "id")
         )
         if account_code not in accounts:
-            raise billing.MissingAccount(exception.tenant_id, account_code)
+            raise LookupError(account_code)
         money = Money(exception.difference, Currency(exception.currency))
         entry = PostEntry(DjangoJournalRepository())(
             JournalEntry(

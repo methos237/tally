@@ -59,9 +59,10 @@ class Match:
 
 
 @dataclass(frozen=True, slots=True)
-class Exception_:
-    """A line the rules could not place. `difference` is statement minus ledger when a
-    reference matched with another amount, else the full line amount."""
+class Unplaced:
+    """A statement line the rules could not place: a reconciliation exception.
+    `difference` is statement minus ledger when a reference matched with another
+    amount, else the full line amount."""
 
     line_id: int
     reason: Reason
@@ -71,10 +72,12 @@ class Exception_:
 
 def match(
     lines: tuple[StatementLine, ...], items: tuple[LedgerItem, ...], window_days: int = WINDOW_DAYS
-) -> tuple[tuple[Match, ...], tuple[Exception_, ...]]:
+) -> tuple[tuple[Match, ...], tuple[Unplaced, ...]]:
+    # ponytail: O(lines x items) list scans; index `free` by reference and by amount if
+    # statements reach thousands of lines
     free = sorted(items, key=lambda item: (item.occurred_on, item.entry_id))
     matches: list[Match] = []
-    exceptions: list[Exception_] = []
+    exceptions: list[Unplaced] = []
     for line in sorted(lines, key=lambda line: line.id):
         by_reference = [
             item
@@ -98,13 +101,13 @@ def match(
             elif by_reference:
                 item = by_reference[0]
                 exceptions.append(
-                    Exception_(
+                    Unplaced(
                         line.id, Reason.AMOUNT_DIFFERS, line.amount - item.amount, item.entry_id
                     )
                 )
                 continue
             else:
-                exceptions.append(Exception_(line.id, Reason.UNMATCHED, line.amount))
+                exceptions.append(Unplaced(line.id, Reason.UNMATCHED, line.amount))
                 continue
         free.remove(chosen)
         matches.append(Match(line.id, chosen.entry_id, rule))

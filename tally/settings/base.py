@@ -7,8 +7,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-not-secret")
 DEBUG = False
-# host.docker.internal: the Airflow container reaching Django on the host.
-ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1", "host.docker.internal"]
+ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
 
 INSTALLED_APPS = [
     "django.contrib.auth",

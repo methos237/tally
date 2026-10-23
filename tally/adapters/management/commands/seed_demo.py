@@ -16,8 +16,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from tally.adapters import billing, reconciliation
-from tally.adapters.models import Account, Customer, Plan, Subscription, Tenant
-from tally.adapters.models import JournalEntry as JournalEntryRow
+from tally.adapters.models import Account, Customer, JournalLine, Plan, Subscription, Tenant
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import PostEntry
 from tally.domain.journal import JournalEntry, Line
@@ -164,34 +163,29 @@ class Command(BaseCommand):
         """A bank statement for the last week: every payment in the ledger, plus three
         deliberate exceptions. Reconciled on the spot so the exceptions are visible."""
         week = DEMO_DATE - timedelta(days=7)
-        payments = (
-            JournalEntryRow.objects.filter(
+        *settled, last = (
+            JournalLine.objects.filter(
                 tenant=tenant,
-                source_type="payment",
-                occurred_at__gte=week,
-                occurred_at__lte=DEMO_DATE,
+                account__code="1000",
+                entry__source_type="payment",
+                entry__occurred_at__range=(week, DEMO_DATE),
             )
-            .prefetch_related("lines__account")
-            .order_by("occurred_at", "id")
+            .select_related("entry")
+            .order_by("entry__occurred_at", "entry_id")
         )
-        rows = ["Date,Description,Reference,Amount"]
-        last: JournalEntryRow | None = None
-        for entry in payments:
-            cash = next(line for line in entry.lines.all() if line.account.code == "1000")
-            rows.append(
-                f"{entry.occurred_at:%Y-%m-%d},Card settlement,{entry.source_id},{cash.amount:.2f}"
-            )
-            last = entry
-        assert last is not None, "the billing seed left no payments in the last week"
         day = f"{DEMO_DATE:%Y-%m-%d}"
+
+        def row(cash: JournalLine, amount: Decimal, text: str = "Card settlement") -> str:
+            return f"{cash.entry.occurred_at:%Y-%m-%d},{text},{cash.entry.source_id},{amount:.2f}"
+
+        rows = ["Date,Description,Reference,Amount"]
+        rows += [row(cash, cash.amount) for cash in settled]
         # 1. a fee the ledger never saw; 2. a deposit with no counterpart; 3. the last
         # payment one cent off instead of exact, so its reference matches but the amount does not
-        exact = rows.pop()
-        off_by_one = Decimal(exact.rsplit(",", 1)[1]) + Decimal("0.01")
         rows += [
             f"{day},Monthly account fee,FEE-{DEMO_DATE:%Y%m},-12.50",
             f"{day},Unidentified deposit,,777.77",
-            f"{last.occurred_at:%Y-%m-%d},Card settlement,{last.source_id},{off_by_one:.2f}",
+            row(last, last.amount + Decimal("0.01")),
         ]
         statement = reconciliation.import_statement(tenant.id, "\n".join(rows) + "\n")
         reconciliation.reconcile(statement, DEMO_DATE)

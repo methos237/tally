@@ -16,7 +16,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from tally.adapters import reports
-from tally.adapters.models import SettlementMarker, Tenant
+from tally.adapters.models import SettlementMarker
 
 HEADER = "X-Internal-Token"
 
@@ -38,19 +38,19 @@ def internal(view: Callable[..., HttpResponse]) -> Callable[..., HttpResponse]:
 def settlement(request: HttpRequest, day: date) -> HttpResponse:
     """GET: 200 when the day is settled, 404 until then. POST: settle it by hand."""
     if request.method == "POST":
-        created, _ = SettlementMarker.objects.get_or_create(day=day)
-        return JsonResponse({"day": day, "settled_at": created.settled_at})
-    marker = SettlementMarker.objects.filter(day=day).first()
-    if marker is None:
+        marker, _ = SettlementMarker.objects.get_or_create(day=day)
+        return JsonResponse({"day": day, "settled_at": marker.settled_at})
+    existing = SettlementMarker.objects.filter(day=day).first()
+    if existing is None:
         return JsonResponse({"day": day, "settled": False}, status=404)
-    return JsonResponse({"day": day, "settled": True, "settled_at": marker.settled_at})
+    return JsonResponse({"day": day, "settled": True, "settled_at": existing.settled_at})
 
 
 @internal
 @require_http_methods(["POST"])
 def run_report(request: HttpRequest, day: date) -> HttpResponse:
     """Write the day's CSV for every tenant; returns the object keys."""
-    keys = [reports.write(tenant, day) for tenant in Tenant.objects.order_by("id")]
+    keys = reports.write_all(day)
     return JsonResponse({"day": day, "bucket": settings.S3_BUCKET, "keys": keys})
 
 
@@ -58,7 +58,4 @@ def run_report(request: HttpRequest, day: date) -> HttpResponse:
 @require_http_methods(["POST"])
 def report_ready(request: HttpRequest, day: date) -> HttpResponse:
     """Queue report.ready for every tenant's webhook endpoints."""
-    tenants = list(Tenant.objects.order_by("id"))
-    for tenant in tenants:
-        reports.notify_ready(tenant, day)
-    return JsonResponse({"day": day, "notified": [t.id for t in tenants]})
+    return JsonResponse({"day": day, "notified": reports.notify_all(day)})

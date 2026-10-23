@@ -1,3 +1,4 @@
+import random
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -6,12 +7,12 @@ from hypothesis import strategies as st
 
 from tally.domain.money import Currency, Money
 from tally.domain.reconciliation import (
-    Exception_,
     LedgerItem,
     Match,
     Reason,
     Rule,
     StatementLine,
+    Unplaced,
     match,
 )
 
@@ -48,18 +49,18 @@ def test_amount_within_three_days_matches_the_earliest_candidate() -> None:
 
 def test_amount_outside_the_window_is_unmatched() -> None:
     _, exceptions = match((line(1, "20.00"),), (item(10, "20.00", days=4),))
-    assert exceptions == (Exception_(1, Reason.UNMATCHED, usd("20.00")),)
+    assert exceptions == (Unplaced(1, Reason.UNMATCHED, usd("20.00")),)
 
 
 def test_reference_with_a_different_amount_reports_the_difference() -> None:
     _, exceptions = match((line(1, "50.00", "inv_7"),), (item(10, "49.00", "inv_7"),))
-    assert exceptions == (Exception_(1, Reason.AMOUNT_DIFFERS, usd("1.00"), entry_id=10),)
+    assert exceptions == (Unplaced(1, Reason.AMOUNT_DIFFERS, usd("1.00"), entry_id=10),)
 
 
 def test_each_ledger_item_is_used_once() -> None:
     matches, exceptions = match((line(1, "9.00"), line(2, "9.00")), (item(10, "9.00"),))
     assert matches == (Match(1, 10, Rule.AMOUNT_WINDOW),)
-    assert exceptions == (Exception_(2, Reason.UNMATCHED, usd("9.00")),)
+    assert exceptions == (Unplaced(2, Reason.UNMATCHED, usd("9.00")),)
 
 
 amounts = st.decimals(min_value=Decimal("0.01"), max_value=Decimal("5000"), places=2)
@@ -102,13 +103,10 @@ def test_every_line_ends_matched_or_excepted_exactly_once(
 
 @given(scenario(), st.randoms(use_true_random=False))
 def test_matching_is_deterministic_under_input_order(
-    data: tuple[tuple[StatementLine, ...], tuple[LedgerItem, ...]], rng: object
+    data: tuple[tuple[StatementLine, ...], tuple[LedgerItem, ...]], rng: random.Random
 ) -> None:
-    import random
-
     lines, items = data
     shuffled_lines, shuffled_items = list(lines), list(items)
-    assert isinstance(rng, random.Random)
     rng.shuffle(shuffled_lines)
     rng.shuffle(shuffled_items)
     assert match(lines, items) == match(tuple(shuffled_lines), tuple(shuffled_items))

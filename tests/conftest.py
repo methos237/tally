@@ -3,10 +3,10 @@ from collections import defaultdict
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
+from uuid import uuid4
 
 import pytest
-from botocore.exceptions import ClientError
-from django.conf import settings as django_settings
 from hypothesis import settings
 
 from tally.adapters.models import (
@@ -90,19 +90,14 @@ def subscription(tenant: Tenant) -> Subscription:
 
 
 @pytest.fixture
-def bucket() -> Iterator[str]:
-    """The reports bucket on the compose (or CI) RustFS, created on first use. Objects
-    written during the test are removed afterwards: the bucket is shared with dev."""
+def bucket(settings: Any) -> Iterator[str]:
+    """A bucket of this test's own on the compose (or CI) RustFS, removed afterwards."""
     from tally.adapters import reports
 
     client = reports.s3()
-    name = str(django_settings.S3_BUCKET)
-    try:
-        client.head_bucket(Bucket=name)
-    except ClientError:
-        client.create_bucket(Bucket=name)
-    before = {o["Key"] for o in client.list_objects_v2(Bucket=name).get("Contents", [])}
+    name = settings.S3_BUCKET = f"test-{uuid4().hex[:12]}"
+    client.create_bucket(Bucket=name)
     yield name
-    after = {o["Key"] for o in client.list_objects_v2(Bucket=name).get("Contents", [])}
-    for key in after - before:
-        client.delete_object(Bucket=name, Key=key)
+    for obj in client.list_objects_v2(Bucket=name).get("Contents", []):
+        client.delete_object(Bucket=name, Key=obj["Key"])
+    client.delete_bucket(Bucket=name)

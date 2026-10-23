@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Create the `airflow` metadata database on the shared Postgres (idempotent), then migrate.
+# Create the `airflow` metadata database on the shared Postgres if missing, then hand
+# over to `airflow standalone`, which migrates it and runs every Airflow component.
 set -euo pipefail
 python - <<'PY'
 import os, psycopg2
@@ -11,4 +12,4 @@ if cur.fetchone() is None:
     cur.execute("CREATE DATABASE airflow")
     print("created database airflow")
 PY
-airflow db migrate
+exec airflow standalone

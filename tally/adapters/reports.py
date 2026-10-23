@@ -7,13 +7,13 @@ counts, open reconciliation exceptions.
 
 import csv
 import io
-from datetime import date, datetime, time
+from datetime import date
+from functools import cache
 from typing import Any
 
 import boto3
 from django.conf import settings
 from django.db.models import Count, Sum
-from django.utils import timezone
 
 from tally.adapters import models, outbox
 
@@ -22,20 +22,19 @@ COLUMNS = ["section", "key", "label", "count", "amount", "currency"]
 
 def build(tenant: models.Tenant, day: date) -> str:
     """CSV text for `tenant` as of the end of `day`."""
-    end = datetime.combine(day, time.max, tzinfo=timezone.get_current_timezone())
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
     writer.writerow(COLUMNS)
-    accounts = models.Account.objects.filter(tenant=tenant).order_by("code")
-    for account in accounts:
+    # ponytail: one aggregate per account (12 per tenant); group by account_id if the chart grows
+    for account in models.Account.objects.filter(tenant=tenant).order_by("code"):
         agg = models.JournalLine.objects.filter(
-            account=account, entry__occurred_at__lte=end
+            account=account, entry__occurred_at__date__lte=day
         ).aggregate(n=Count("id"), total=Sum("amount"))
         writer.writerow(
             ["account", account.code, account.name, agg["n"], agg["total"] or 0, account.currency]
         )
     invoices = (
-        models.Invoice.objects.filter(tenant=tenant, issued_at__lte=end)
+        models.Invoice.objects.filter(tenant=tenant, issued_at__date__lte=day)
         .values("status", "currency")
         .annotate(n=Count("id"), total=Sum("amount"))
         .order_by("status", "currency")
@@ -54,6 +53,7 @@ def key_for(tenant: models.Tenant, day: date) -> str:
     return f"{tenant.id}/{day.isoformat()}.csv"
 
 
+@cache
 def s3() -> Any:
     return boto3.client(
         "s3",
@@ -74,10 +74,26 @@ def write(tenant: models.Tenant, day: date) -> str:
     return key
 
 
-def notify_ready(tenant: models.Tenant, day: date) -> None:
-    """`report.ready` to the tenant's webhook endpoints, naming where the file landed."""
-    outbox.publish(
-        tenant.id,
-        "report.ready",
-        {"date": day, "bucket": settings.S3_BUCKET, "key": key_for(tenant, day)},
-    )
+def tenants(tenant_id: int | None = None) -> list[models.Tenant]:
+    rows = models.Tenant.objects.order_by("id")
+    return list(rows.filter(id=tenant_id) if tenant_id else rows)
+
+
+def write_all(day: date, tenant_id: int | None = None) -> list[str]:
+    """Every tenant's CSV (or one tenant's); returns the keys. Synchronous.
+    ponytail: fine for a handful of tenants; hand to Celery with a status endpoint for the
+    sensor once a request could outlive a 30 s worker timeout."""
+    return [write(tenant, day) for tenant in tenants(tenant_id)]
+
+
+def notify_all(day: date, tenant_id: int | None = None) -> list[int]:
+    """`report.ready` to every tenant's webhook endpoints, naming where the file landed."""
+    notified = []
+    for tenant in tenants(tenant_id):
+        outbox.publish(
+            tenant.id,
+            "report.ready",
+            {"date": day, "bucket": settings.S3_BUCKET, "key": key_for(tenant, day)},
+        )
+        notified.append(tenant.id)
+    return notified

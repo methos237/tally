@@ -1,7 +1,8 @@
 """manage.py partner_report --date 2026-10-22 [--tenant 1] [--notify]
 
 Writes one CSV per tenant to the reports bucket; with --notify also queues a
-report.ready webhook per tenant. Airflow's DAG calls exactly this.
+report.ready webhook per tenant. The local and backfill entry point; the Airflow DAG
+does the same work through POST /internal/reports/{day}.
 """
 
 from datetime import date
@@ -10,7 +11,6 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandParser
 
 from tally.adapters import reports
-from tally.adapters.models import Tenant
 
 
 class Command(BaseCommand):
@@ -22,11 +22,7 @@ class Command(BaseCommand):
         parser.add_argument("--notify", action="store_true", help="queue report.ready webhooks")
 
     def handle(self, *args: Any, **options: Any) -> None:
-        tenants = Tenant.objects.order_by("id")
-        if options["tenant"]:
-            tenants = tenants.filter(id=options["tenant"])
-        for tenant in tenants:
-            key = reports.write(tenant, options["date"])
-            if options["notify"]:
-                reports.notify_ready(tenant, options["date"])
+        for key in reports.write_all(options["date"], options["tenant"]):
             self.stdout.write(key)
+        if options["notify"]:
+            reports.notify_all(options["date"], options["tenant"])

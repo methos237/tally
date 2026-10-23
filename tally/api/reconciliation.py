@@ -9,7 +9,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from tally.adapters import models, reconciliation
-from tally.adapters.billing import MissingAccount
 from tally.api import serializers
 from tally.api.auth import tenant_of
 from tally.api.idempotency import idempotent
@@ -24,20 +23,16 @@ class CsvParser(parsers.BaseParser):
 
 
 def statement_row(tenant_id: int, statement_id: int) -> models.Statement:
-    row = (
-        models.Statement.objects.filter(tenant_id=tenant_id, id=statement_id)
-        .prefetch_related("lines", "exceptions__line")
-        .first()
-    )
+    row = models.Statement.objects.filter(tenant_id=tenant_id, id=statement_id).first()
     if row is None:
         raise Problem(404, f"statement {statement_id} not found")
     return row
 
 
 def detail(tenant_id: int, statement_id: int, code: int = 200) -> Response:
-    return Response(
-        serializers.StatementOut(statement_row(tenant_id, statement_id)).data, status=code
-    )
+    row = statement_row(tenant_id, statement_id)
+    full = models.Statement.objects.prefetch_related("lines", "exceptions__line").get(id=row.id)
+    return Response(serializers.StatementOut(full).data, status=code)
 
 
 class StatementList(APIView):
@@ -118,11 +113,17 @@ class ExceptionResolve(APIView):
             raise Problem(409, f"exception {exception_id} is already {row.resolution}")
         now = timezone.now()
         if body.validated_data["action"] == "adjust":
+            account = body.validated_data["account"]
             try:
-                reconciliation.adjust(row, body.validated_data["account"], now)
-            except MissingAccount as exc:
-                raise Problem(422, str(exc)) from exc
+                reconciliation.adjust(row, account, now)
+            except LookupError:
+                raise Problem(
+                    422,
+                    f"accounts ['{account}'] do not exist for this tenant",
+                    title="Entry rejected",
+                    type="posting/UnknownAccount",
+                    accounts=[account],
+                ) from None
         else:
             reconciliation.explain(row, body.validated_data["explanation"], now)
-        row.refresh_from_db()
         return Response(serializers.ExceptionOut(row).data)
