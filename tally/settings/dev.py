@@ -1,3 +1,5 @@
+import os
+
 from .base import *  # noqa: F403
 
 DEBUG = True
@@ -5,6 +7,7 @@ DEBUG = True
 ALLOWED_HOSTS = [*ALLOWED_HOSTS, "host.docker.internal"]  # noqa: F405
 # The Vite dev server proxies /api and /console but keeps its own Origin header.
 CSRF_TRUSTED_ORIGINS = ["http://localhost:5173"]
+OTEL_EXPORTER_OTLP_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 
 from tally.logging import configure as _configure_logging  # noqa: E402
 

@@ -117,6 +117,9 @@ S3_BUCKET = os.environ.get("S3_BUCKET", "reports")
 # Shared with Airflow (compose: AIRFLOW_VAR_TALLY_INTERNAL_TOKEN). Guards /internal/*.
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "dev-internal-token")
 
+# OTLP/HTTP collector (Jaeger in compose). Empty disables export; spans are still recorded.
+OTEL_EXPORTER_OTLP_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+
 LOGGING_CONFIG = None  # structlog configured in tally.logging
 
 from tally.logging import configure as _configure_logging  # noqa: E402

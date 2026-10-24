@@ -2,10 +2,7 @@
 local receiver with a verifiable signature, backoff, dead letter, redelivery."""
 
 import json
-import threading
-from collections.abc import Iterator
 from datetime import UTC, datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 import pytest
@@ -15,7 +12,7 @@ from freezegun import freeze_time
 from tally.adapters import billing, outbox
 from tally.adapters.models import OutboxMessage, Subscription, WebhookEndpoint
 from tally.adapters.tasks import deliver_due_webhooks
-from tests.api.conftest import Idem
+from tests.api.conftest import Idem, Receiver
 from tests.conftest import NOW
 
 
@@ -26,46 +23,6 @@ def verify(secret: str, body: bytes, header: str) -> bool:
     except stripe.SignatureVerificationError:
         return False
     return True
-
-
-class Receiver:
-    """A tenant's endpoint on localhost. Records every request; `status` is what it answers."""
-
-    def __init__(self) -> None:
-        self.requests: list[tuple[dict[str, str], bytes]] = []
-        self.status = 200
-        receiver = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self) -> None:
-                body = self.rfile.read(int(self.headers["Content-Length"]))
-                receiver.requests.append((dict(self.headers), body))
-                self.send_response(receiver.status)
-                self.end_headers()
-
-            def log_message(self, *args: Any) -> None:
-                pass
-
-        self.server = HTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self.server.server_port}/hooks"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-
-    def close(self) -> None:
-        self.server.shutdown()
-
-
-@pytest.fixture
-def receiver() -> Iterator[Receiver]:
-    r = Receiver()
-    yield r
-    r.close()
-
-
-@pytest.fixture
-def endpoint(subscription: Subscription, receiver: Receiver) -> WebhookEndpoint:
-    return WebhookEndpoint.objects.create(
-        tenant=subscription.tenant, url=receiver.url, secret=WebhookEndpoint.new_secret()
-    )
 
 
 @pytest.mark.django_db
