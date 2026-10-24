@@ -26,6 +26,12 @@ export default defineConfigWithVueTs(
     files: ['src/**/__tests__/*'],
   },
 
+  {
+    name: 'app/cypress',
+    files: ['cypress/**/*.ts'],
+    rules: { '@typescript-eslint/no-namespace': 'off' }, // Cypress command typings need it
+  },
+
   ...pluginOxlint.buildFromOxlintConfigFile('.oxlintrc.json'),
 
   skipFormatting,
