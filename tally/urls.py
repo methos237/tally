@@ -14,6 +14,7 @@ def console_index(request: HttpRequest) -> HttpResponseBase:
 urlpatterns = [
     path("", include("tally.api.urls")),
     re_path(
-        r"^(?!api/|console/|internal/|webhooks/|assets/|openapi|docs|health).*$", console_index
+        r"^(?!api/|console/|internal/|webhooks/|assets/|openapi|docs|health).*$",
+        console_index,
     ),
 ]

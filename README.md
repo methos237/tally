@@ -4,23 +4,24 @@ Billing and ledger platform in Python: a double-entry ledger with a provable bal
 
 A tenant posts financial events through an API. Every event becomes a balanced journal entry or is rejected with the reason. Subscriptions invoice on a schedule and collect through Stripe; the ledger, not Stripe, is the source of truth. Bank statements are imported and reconciled against the journal, and anything that does not match becomes an exception an operator resolves from the console. Every write is idempotent, every account mutation is locked in a fixed order, and the journal cannot be edited after the fact: corrections are reversing entries. Everything runs in Docker Compose with no cloud account and no card on file.
 
-**Status.** Phases 0 (skeleton, compose, CI), 1 (domain and journal) and 2 (posting API) are done. This README describes the target system; the phase list at the end records what has landed. Nothing described here should be read as finished until its phase is ticked.
+**Status.** Phases 0 to 6 are done: everything below runs from a clean checkout with Docker and uv. Phase 7 (stretch items) is open. The phase list at the end records what landed and when.
 
-## Ten-minute tour
+## Three-minute demo
 
-The intended path once Phase 6 lands:
+Three minutes, one command, no accounts:
 
 ```bash
-docker compose up -d --wait                  # Postgres 5435, Redis 6380, S3 (RustFS) 9000, stripe-mock 12111, Jaeger 16687
-make dev                                     # migrations, seed, Django 8001, Celery worker + Beat
-scripts/post-entry.sh                        # one balanced entry with an Idempotency-Key, then the same key again
-scripts/post-entry.sh --unbalanced           # 422 problem details naming the currency and the difference
-scripts/stripe-listen.sh                     # forward Stripe test-mode webhooks; triggers payment_intent.succeeded
-curl -s localhost:8001/api/accounts/1200/balance | jq   # cash moved, accounts receivable cleared
-docker compose --profile batch up -d         # Airflow 8081
-airflow dags trigger partner_daily_report    # CSV per tenant lands in S3 bucket reports/
-open http://localhost:5173                   # console: journal, balances, subscriptions, dead letters, reconciliation
+scripts/demo.sh
 ```
+
+It brings compose up (Postgres, Redis, stripe-mock, RustFS, Jaeger, Airflow), migrates and seeds two tenants with 90 days of entries, starts Django, a Celery worker and Beat, then walks the system:
+
+1. posts a balanced entry and replays the same `Idempotency-Key` (second response carries `Idempotent-Replayed: true`);
+2. pays an invoice: a `PaymentIntent` on stripe-mock, then the signed `payment_intent.succeeded` webhook back to the API, which posts cash against receivables;
+3. settles yesterday and triggers the `partner_daily_report` DAG in Airflow, which writes a CSV per tenant to the S3 bucket;
+4. prints the balances of cash, receivables and revenue, and the links: Jaeger traces, Airflow, `/internal/metrics`.
+
+Then `make console` and open <http://localhost:8001> as `ops` / `ops-demo` for the dashboard, journal, reconciliation workbench and the rest. Every request the demo made is a trace in Jaeger at <http://localhost:16687>, including the outbox write and the Celery delivery that followed it.
 
 ## Architecture
 
@@ -43,7 +44,10 @@ Tenant systems ──► POST /entries, /subscriptions, /statements   (X-Api-Key
    Stripe test mode ──► POST /webhooks/stripe (signature verified, deduplicated)
    Airflow ─────────── partner_daily_report ──► S3 bucket reports/ (RustFS) ──► report.ready webhook
 
-Console (Vue 3, Vite, Tailwind, Pinia, Storybook, Cypress) ──► session-authenticated JSON endpoints
+Console (Vue 3, Vite, Tailwind, Pinia, Storybook, Cypress) ──► session-authenticated JSON endpoints,
+                                                               served by Django + whitenoise
+OpenTelemetry ──► Jaeger 16687 (one trace: request, outbox write, Celery delivery, tenant endpoint)
+/internal/metrics ► request latency, posting rate, projection lag, deliveries by state, queue depth
 ```
 
 | Directory | Role | Port |
@@ -54,10 +58,12 @@ Console (Vue 3, Vite, Tailwind, Pinia, Storybook, Cypress) ──► session-aut
 | `tally/api` | Django REST Framework views, serializers, OpenAPI | 8001 |
 | `console/` | Vue 3 operations console | 5173 |
 | `airflow/` | `partner_daily_report` DAG | 8081 |
+| `docs/runbooks` | Dead-letter growth, projection lag, Stripe webhook failures, Beat not firing | – |
+| `scripts/` | `demo.sh`, `stripe-listen.sh` | – |
 
 ## Stack
 
-Python 3.13 · Django 6.0 · Django REST Framework 3.18 · Celery 5.6 + Redis 7 · PostgreSQL 17 · Stripe (test mode) · Airflow · RustFS (S3 API) · Hypothesis · pytest · import-linter · Vue 3.5 · Vite 8 · TypeScript 6 · Tailwind CSS 4 · Pinia 4 · Storybook · Cypress · Lighthouse CI · OpenTelemetry · GitHub Actions
+Python 3.13 · Django 6.0 · Django REST Framework 3.18 · Celery 5.6 + Redis 7 · PostgreSQL 17 · Stripe (test mode) · Airflow · RustFS (S3 API) · Hypothesis · pytest · import-linter · Vue 3.5 · Vite 8 · TypeScript 6 · Tailwind CSS 4 · Pinia 4 · Storybook · Cypress · Lighthouse CI · OpenTelemetry + Jaeger · django-prometheus · structlog · GitHub Actions
 
 Prerequisites: Docker with Compose v2, uv 0.12+, Node 26, Stripe CLI, a Stripe account in test mode (free, no card). Copy `.env.example` to `.env`; the defaults work against compose without a Stripe key.
 
@@ -68,7 +74,10 @@ make test                     # pytest against the compose Postgres
 uv run python manage.py seed_demo       # two tenants, 90 days of entries
 uv run python manage.py replay_balances # rebuild the balance projection
 make lint                     # ruff, mypy, import-linter
-cd console && npm ci && npm run dev   # Vite on 5173, proxies /api and /console to 8001
+make console                  # build the console; `make dev` serves it on 8001
+make openapi                  # regenerate console/openapi.json and the TypeScript client types
+scripts/demo.sh               # the whole system end to end, about three minutes
+cd console && npm ci && npm run dev   # Vite on 5173 for console work, proxies /api and /console to 8001
 ```
 
 ## The ledger
@@ -170,7 +179,7 @@ The state machine is a transition table in `tally/domain/billing.py`; a Hypothes
 
 **Inbound webhooks.** `POST /webhooks/stripe` verifies `Stripe-Signature` with the SDK (HMAC-SHA256, timestamps older than five minutes rejected), inserts `event.id` into `stripe_events`, returns 200 and hands the row to `process_stripe_event`. A tampered signature is a 400 and nothing is stored; the same event delivered twice is acknowledged and processed once; an intent Tally never created (a `stripe trigger` fixture, say) is acknowledged and books nothing.
 
-**Outbound webhooks.** Tenants register endpoints with `POST /api/webhook-endpoints` and receive the secret once. Events (`invoice.issued`, `invoice.paid`, `subscription.past_due`, `subscription.active`) are written to `webhook_outbox` in the same transaction as the business write, so they commit or roll back with it. `deliver_due_webhooks` sweeps every ten seconds and posts the envelope `{"id", "type", "created_at", "data"}` with:
+**Outbound webhooks.** Tenants register endpoints with `POST /api/webhook-endpoints` and receive the secret once. Events (`entry.posted` for every journal entry, `invoice.issued`, `invoice.paid`, `subscription.past_due`, `subscription.active`, `reconciliation.exception`, `report.ready`) are written to `webhook_outbox` in the same transaction as the business write, so they commit or roll back with it. `deliver_due_webhooks` sweeps every ten seconds and posts the envelope `{"id", "type", "created_at", "data"}` with:
 
 ```
 X-Tally-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>
@@ -241,23 +250,42 @@ Cypress drives sign in, the journal, resolving an exception and redelivering a d
 
 More in [`docs/screenshots/`](docs/screenshots/).
 
+## Observability
+
+**Traces.** OpenTelemetry is configured once in `ApiConfig.ready()`, so Django and the Celery worker set up the same provider: Django, psycopg, Redis, urllib and Celery are auto-instrumented and spans go OTLP/HTTP to the Jaeger container (`OTEL_EXPORTER_OTLP_ENDPOINT`, empty disables export). The interesting hop is the outbox: a delivery is picked up by a Beat sweep, not enqueued from the request, so Celery's own context propagation cannot link it. The outbox row stores the W3C `traceparent` of the request that published the event, `webhook.deliver` continues that context, and urllib forwards it to the tenant. One trace therefore reads `POST api/entries` → SQL → `outbox.publish` → `webhook.deliver` → `POST` to the endpoint; a test asserts the four spans share a trace id and that the receiver saw the `Traceparent` header.
+
+**Metrics.** `GET /internal/metrics` (header `X-Internal-Token`) is Prometheus text. `django-prometheus` records request latency per view. The business numbers are computed from the database at scrape time by one collector, so they are right across every Django and Celery process without in-process counters: `tally_journal_entries_total` (posting rate via `rate()`), `tally_projection_lag_seconds` (`max(journal_entries.posted_at) - account_balances.as_of`, zero by construction today; see [`docs/consistency.md`](docs/consistency.md)), `tally_webhook_deliveries{state=delivered|pending|dead}`, `tally_celery_queue_depth`.
+
+**Logs.** structlog, JSON on stdout (console renderer under `tally.settings.dev`).
+
+**Runbooks.** [`docs/runbooks/`](docs/runbooks/README.md): dead-letter growth, projection lag, Stripe webhook failures, Beat not firing. Symptom, how to confirm, what to run, how to prevent.
+
 ## Design decisions
 
-- **Domain package that imports nothing from Django.** `tally/domain` holds the rules; `import-linter` fails CI if it imports Django, DRF, Celery or Stripe. The ORM, the payment processor and the queue are adapters. That is hexagonal architecture named plainly, and it is what makes the invariant testable in microseconds with Hypothesis.
-- **Append-only journal with reversing entries, not editable rows.** An auditor can replay the ledger. The cost is a projection table and a rebuild command, both small.
-- **Trigger in the database as the last line.** Application code is the first line and the tested one; the trigger exists for the day something bypasses it.
-- **Idempotency record in the same transaction as the write.** Writing it before or after leaves a window where a retry either loses the response or double-posts.
-- **Lock ordering over retries.** Ordering account locks by id costs one `sort`; retrying deadlocks costs a retry loop in every caller.
-- **Ledger as the source of truth, Stripe as the processor.** Stripe knows about charges. Only the ledger knows that a charge settled an invoice that recognized revenue.
-- **Outbox for outbound webhooks.** A webhook sent from inside a request either fires for a transaction that rolls back or is lost when the process dies after commit. The outbox closes both.
-- **Airflow for one DAG.** Two or three tasks is enough to use it truthfully, and the job stays a management command so nobody needs Airflow to test it.
-- **Vue, not React.** React is already proven elsewhere; the console is here to prove Vue 3, Pinia, Storybook and Cypress with the same care.
-- **Zero cost.** Compose for everything, Stripe test mode, RustFS instead of S3. No cloud account is created for this project.
-- **RustFS, not MinIO.** MinIO withdrew its free container images in September 2026. RustFS speaks the same S3 API on the same ports, so `boto3` and the report job do not know the difference.
+Each choice and the alternative it beat.
+
+| Choice | Instead of | Why |
+|---|---|---|
+| Domain package that imports nothing from Django; `import-linter` fails CI if it does | Business rules in models and views | The balancing invariant is testable in microseconds with Hypothesis, and the ORM, Stripe and Celery stay adapters |
+| Append-only journal with reversing entries | Editable rows | An auditor can replay the ledger. The cost is a projection table and a rebuild command, both small |
+| Balancing trigger in the database as the last line | Application code alone | Application code is the first line and the tested one; the trigger exists for the day something bypasses it |
+| Idempotency record written in the same transaction as the write | Before or after the write | Either order leaves a window where a retry loses the response or double-posts |
+| Account locks taken in id order | Deadlock retry loops | Ordering costs one `sort`; retrying costs a loop in every caller |
+| Ledger as source of truth, Stripe as payment processor | Stripe Billing | Stripe knows about charges. Only the ledger knows a charge settled an invoice that recognized revenue |
+| Outbox for outbound webhooks | Sending from the request | A webhook sent in the request fires for a transaction that rolls back, or is lost when the process dies after commit |
+| `traceparent` stored on the outbox row | Celery header propagation | The delivery is picked up by a sweep, not enqueued from the request; the row is the only thing that crosses |
+| Airflow for one three-task DAG | Beat alone | A schedule, a settlement sensor, retries, a run timeout, backfill and a UI, while the job stays a management command that tests without Airflow |
+| Vue 3, Pinia, Storybook, Cypress | React | React is proven elsewhere; the console is here to prove the Vue stack with the same care |
+| Django session for console operators, acting as their tenant | API key in the browser | Operators never hold a tenant credential; the API stays one surface with CSRF enforced on the session path |
+| Console served by Django + whitenoise | nginx container | One process, immutable caching for Vite's hashed assets, no second config to keep in step |
+| `django-prometheus` + one DB-backed collector | OTel metrics | OTel metrics need a collector sidecar for the same Prometheus text; the DB-backed collector is also correct across processes |
+| Jaeger v2 all-in-one | Grafana Tempo + Grafana | One container, native OTLP, a UI good enough to show one trace end to end |
+| Zero cost: compose, Stripe test mode, RustFS | A cloud account | Nothing to pay for and nothing to leak |
+| RustFS | MinIO | MinIO withdrew its free container images in September 2026; RustFS speaks the same S3 API on the same ports, so `boto3` and the report job do not know the difference |
 
 ## Tests
 
-Planned, enforced in CI from Phase 0:
+Enforced in CI (`python.yml`, `console.yml`, `airflow.yml`):
 
 | Level | Where | What |
 |---|---|---|
@@ -267,7 +295,8 @@ Planned, enforced in CI from Phase 0:
 | Concurrency | api | 20 threads on two accounts, idempotent replay under concurrent same-key requests |
 | Integration | api, Celery | Stripe webhooks with recorded events and tampered signatures against `stripe-mock`, outbound delivery and dead-lettering against a local receiver |
 | DAG | airflow | import and structure tests, one `airflow dags test` run |
-| End to end | console | Cypress flows, `cypress-axe`, Lighthouse budgets |
+| Observability | api | one trace from the request to the tenant endpoint; `/internal/metrics` gauges follow the database |
+| End to end | console | Cypress flows against the production build with `seed_demo`, `cypress-axe` at WCAG 2.2 AA, Lighthouse 90+ on the signed-in dashboard |
 
 ## Phases
 
@@ -279,7 +308,7 @@ Each phase is a branch merged by pull request and tracked as a GitHub issue.
 - [x] 3 Subscriptions, Stripe, webhooks in and out
 - [x] 4 Reconciliation and the nightly partner report
 - [x] 5 Vue 3 operations console
-- [ ] 6 Observability, demo script, README polish
+- [x] 6 Observability, demo script, README polish
 - [ ] 7 Stretch: Kotlin posting service, Temporal dunning workflow, multi-currency, Postgres row-level security
 
 ## Out of scope, on purpose

@@ -320,6 +320,9 @@ class OutboxMessage(models.Model):
     dead_at = models.DateTimeField(null=True, blank=True)
     last_status = models.PositiveSmallIntegerField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")
+    # W3C trace context of the request that produced the event, so the delivery (picked up
+    # by a Beat sweep, not enqueued from the request) joins the same trace.
+    traceparent = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         db_table = "webhook_outbox"

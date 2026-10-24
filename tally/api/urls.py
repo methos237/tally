@@ -1,6 +1,7 @@
 from datetime import date
 
 from django.urls import path, register_converter
+from django_prometheus.exports import ExportToDjangoView
 from drf_spectacular.views import SpectacularJSONAPIView, SpectacularRedocView
 
 from tally.api import console, internal, reconciliation, report_views, views, webhooks
@@ -68,6 +69,7 @@ urlpatterns = [
         name="reconciliation-exception-resolve",
     ),
     path("webhooks/stripe", webhooks.stripe_webhook, name="stripe-webhook"),
+    path("internal/metrics", internal.internal(ExportToDjangoView), name="metrics"),
     path("internal/settlement/<date:day>", internal.settlement, name="internal-settlement"),
     path("internal/reports/<date:day>", internal.run_report, name="internal-report"),
     path("internal/reports/<date:day>/ready", internal.report_ready, name="internal-report-ready"),

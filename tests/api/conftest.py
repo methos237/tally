@@ -1,5 +1,6 @@
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from uuid import uuid4
 
@@ -7,7 +8,7 @@ import pytest
 from django.db import connection
 from rest_framework.test import APIClient
 
-from tally.adapters.models import ApiKey, Tenant
+from tally.adapters.models import ApiKey, Subscription, Tenant, WebhookEndpoint
 
 
 class Idem(APIClient):
@@ -84,3 +85,43 @@ def other_tenant() -> Tenant:
 def other_client(other_tenant: Tenant) -> Idem:
     """A second tenant's client, for the 404-not-403 tests."""
     return client_for(ApiKey.issue(other_tenant, "test"))
+
+
+class Receiver:
+    """A tenant's endpoint on localhost. Records every request; `status` is what it answers."""
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[dict[str, str], bytes]] = []
+        self.status = 200
+        receiver = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                receiver.requests.append((dict(self.headers), body))
+                self.send_response(receiver.status)
+                self.end_headers()
+
+            def log_message(self, *args: Any) -> None:
+                pass
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}/hooks"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+
+
+@pytest.fixture
+def receiver() -> Iterator[Receiver]:
+    r = Receiver()
+    yield r
+    r.close()
+
+
+@pytest.fixture
+def endpoint(subscription: Subscription, receiver: Receiver) -> WebhookEndpoint:
+    return WebhookEndpoint.objects.create(
+        tenant=subscription.tenant, url=receiver.url, secret=WebhookEndpoint.new_secret()
+    )
