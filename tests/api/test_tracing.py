@@ -11,9 +11,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import SpanKind
 
-from tally.adapters.models import ApiKey, OutboxMessage, Subscription, WebhookEndpoint
+from tally.adapters.models import OutboxMessage, Subscription, WebhookEndpoint
 from tally.adapters.tasks import deliver_due_webhooks
-from tests.api.conftest import Idem, Receiver, client_for
+from tests.api.conftest import Idem, Receiver
 
 
 @pytest.fixture
@@ -32,12 +32,12 @@ def named(spans: list[ReadableSpan], name: str) -> ReadableSpan:
 
 @pytest.mark.django_db(transaction=True)
 def test_entry_post_outbox_and_delivery_share_one_trace(
+    client: Idem,
     subscription: Subscription,
     endpoint: WebhookEndpoint,
     receiver: Receiver,
     spans: InMemorySpanExporter,
 ) -> None:
-    client: Idem = client_for(ApiKey.issue(subscription.tenant, "trace"))
     response = client.post_entry(("1200", "5.000000"), ("4000", "-5.000000"))
     assert response.status_code == 201
     message = OutboxMessage.objects.get(event_type="entry.posted")

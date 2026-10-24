@@ -21,7 +21,6 @@ register_converter(DateConverter, "date")
 
 urlpatterns = [
     path("health", views.health, name="health"),
-    path("metrics", internal.internal(ExportToDjangoView), name="metrics"),  # X-Internal-Token
     path("openapi.json", SpectacularJSONAPIView.as_view(), name="openapi"),
     path("docs", SpectacularRedocView.as_view(url_name="openapi"), name="docs"),
     path("console/session", console.session, name="console-session"),
@@ -70,6 +69,7 @@ urlpatterns = [
         name="reconciliation-exception-resolve",
     ),
     path("webhooks/stripe", webhooks.stripe_webhook, name="stripe-webhook"),
+    path("internal/metrics", internal.internal(ExportToDjangoView), name="metrics"),
     path("internal/settlement/<date:day>", internal.settlement, name="internal-settlement"),
     path("internal/reports/<date:day>", internal.run_report, name="internal-report"),
     path("internal/reports/<date:day>/ready", internal.report_ready, name="internal-report-ready"),

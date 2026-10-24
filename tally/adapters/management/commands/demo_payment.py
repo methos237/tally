@@ -14,6 +14,9 @@ from django.utils import timezone
 
 from tally.adapters import billing, outbox, stripe_gateway
 from tally.adapters.models import Invoice, Subscription
+from tally.domain.billing import InvoiceStatus, SubscriptionStatus
+
+WEBHOOK_URL = "http://localhost:8001/webhooks/stripe"
 
 
 def succeeded_event(invoice: Invoice) -> tuple[bytes, str]:
@@ -36,18 +39,19 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument("--tenant", required=True)
-        parser.add_argument("--webhook-url", default="http://localhost:8001/webhooks/stripe")
 
     def handle(self, *args: Any, **options: Any) -> None:
         invoice = (
-            Invoice.objects.filter(tenant__name=options["tenant"], status="open")
+            Invoice.objects.filter(tenant__name=options["tenant"], status=InvoiceStatus.OPEN)
             .select_related("subscription__customer")
             .order_by("issued_at")
             .first()
         )
         if invoice is None:  # every invoice already paid (a rerun): bill the next period now
             subscription = (
-                Subscription.objects.filter(tenant__name=options["tenant"], status="active")
+                Subscription.objects.filter(
+                    tenant__name=options["tenant"], status=SubscriptionStatus.ACTIVE
+                )
                 .order_by("id")
                 .first()
             )
@@ -61,7 +65,7 @@ class Command(BaseCommand):
         invoice.refresh_from_db()
         payload, signature = succeeded_event(invoice)
         req = request.Request(
-            options["webhook_url"],
+            WEBHOOK_URL,
             data=payload,
             headers={"Content-Type": "application/json", "Stripe-Signature": signature},
         )
@@ -70,6 +74,6 @@ class Command(BaseCommand):
         for _ in range(20):  # the worker applies the event; wait for it
             time.sleep(0.25)
             invoice.refresh_from_db()
-            if invoice.status == "paid":
+            if invoice.status == InvoiceStatus.PAID:
                 break
         self.stdout.write(f"invoice {invoice.id}: {invoice.status}")

@@ -30,14 +30,14 @@ def test_issuing_an_invoice_queues_a_signed_delivery_that_verifies(
     subscription: Subscription, endpoint: WebhookEndpoint, receiver: Receiver
 ) -> None:
     invoice = billing.issue_invoice(subscription, NOW)
-    message = OutboxMessage.objects.get()
-    assert (message.event_type, message.endpoint_id) == ("invoice.issued", endpoint.id)
+    message = OutboxMessage.objects.get(event_type="invoice.issued")
+    assert message.endpoint_id == endpoint.id
     assert message.payload["invoice_id"] == invoice.id
     assert message.payload["amount"] == "49.000000"  # Decimal travels as a string
 
-    assert deliver_due_webhooks() == 1
+    assert deliver_due_webhooks() == 2  # the journal entry's own entry.posted goes out too
 
-    headers, body = receiver.requests[0]
+    headers, body = next(r for r in receiver.requests if r[0]["X-Tally-Event"] == "invoice.issued")
     assert verify(endpoint.secret, body, headers["X-Tally-Signature"])
     assert not verify("whsec_wrong", body, headers["X-Tally-Signature"])
     assert not verify(endpoint.secret, body + b" ", headers["X-Tally-Signature"])
@@ -66,7 +66,8 @@ def test_payment_and_state_changes_are_published_too(
     billing.mark_failed(invoice.id)
     billing.mark_paid(invoice.id, NOW)
     types = list(OutboxMessage.objects.order_by("id").values_list("event_type", flat=True))
-    assert types == [
+    assert types.count("entry.posted") == 2  # the invoice entry and the payment entry
+    assert [t for t in types if t != "entry.posted"] == [
         "invoice.issued",
         "subscription.past_due",
         "subscription.active",
@@ -95,6 +96,7 @@ def test_five_failures_follow_the_backoff_then_dead_letter_then_redeliver(
     receiver.status = 500
     with freeze_time("2026-02-01 09:00:00") as clock:
         billing.issue_invoice(subscription, datetime(2026, 2, 1, 9, tzinfo=UTC))
+        OutboxMessage.objects.filter(event_type="entry.posted").delete()  # one message to follow
         message = OutboxMessage.objects.get()
         # attempt 1 now, then 1 min, 5 min, 30 min, 2 h later: the fifth failure parks it
         expected_gaps = [0, 60, 300, 1800, 7200]
@@ -132,6 +134,7 @@ def test_unreachable_host_counts_as_a_failure(subscription: Subscription) -> Non
         tenant=subscription.tenant, url="http://127.0.0.1:9/hooks", secret="s"
     )
     billing.issue_invoice(subscription, NOW)
+    OutboxMessage.objects.filter(event_type="entry.posted").delete()  # one message to follow
     assert deliver_due_webhooks() == 1
     message = OutboxMessage.objects.get()
     assert message.delivered_at is None

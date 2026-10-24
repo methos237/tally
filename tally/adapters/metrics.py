@@ -8,17 +8,22 @@ report anything. django-prometheus adds the HTTP request latency histograms.
 from collections.abc import Iterator
 
 from django.db import connection
+from django.db.models import Count, Q
 from django_redis import get_redis_connection
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily, Metric
 from prometheus_client.registry import Collector
 
 from tally.adapters.models import JournalEntry, OutboxMessage
 
+# One index probe per account (ix_lines_tenant_account), not a scan of every line per scrape.
 PROJECTION_LAG_SQL = """
-SELECT COALESCE(MAX(GREATEST(EXTRACT(EPOCH FROM (e.posted_at - b.as_of)), 0)), 0)
+SELECT COALESCE(MAX(GREATEST(EXTRACT(EPOCH FROM (latest.posted_at - b.as_of)), 0)), 0)
 FROM account_balances b
-JOIN journal_lines l ON l.account_id = b.account_id
-JOIN journal_entries e ON e.id = l.entry_id
+JOIN LATERAL (
+    SELECT max(e.posted_at) AS posted_at
+    FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id
+    WHERE l.tenant_id = b.tenant_id AND l.account_id = b.account_id
+) latest ON true
 """
 
 
@@ -31,15 +36,8 @@ def projection_lag_seconds() -> float:
 
 
 class TallyCollector(Collector):
-    def describe(self) -> Iterator[Metric]:
-        """Names only, so registering at app start does not touch the database."""
-        for name in (
-            "tally_journal_entries",
-            "tally_projection_lag_seconds",
-            "tally_webhook_deliveries",
-            "tally_celery_queue_depth",
-        ):
-            yield GaugeMetricFamily(name, "")
+    def describe(self) -> list[Metric]:
+        return []  # any describe() keeps REGISTRY.register from running collect() at startup
 
     def collect(self) -> Iterator[Metric]:
         yield CounterMetricFamily(
@@ -55,12 +53,13 @@ class TallyCollector(Collector):
         deliveries = GaugeMetricFamily(
             "tally_webhook_deliveries", "Outbox messages by state", labels=["state"]
         )
-        outbox = OutboxMessage.objects
-        deliveries.add_metric(["delivered"], outbox.filter(delivered_at__isnull=False).count())
-        deliveries.add_metric(["dead"], outbox.filter(dead_at__isnull=False).count())
-        deliveries.add_metric(
-            ["pending"], outbox.filter(delivered_at__isnull=True, dead_at__isnull=True).count()
+        counts = OutboxMessage.objects.aggregate(
+            delivered=Count("id", filter=Q(delivered_at__isnull=False)),
+            dead=Count("id", filter=Q(dead_at__isnull=False)),
+            pending=Count("id", filter=Q(delivered_at__isnull=True, dead_at__isnull=True)),
         )
+        for state, value in counts.items():
+            deliveries.add_metric([state], value)
         yield deliveries
         yield GaugeMetricFamily(
             "tally_celery_queue_depth",

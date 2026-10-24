@@ -19,7 +19,7 @@ It brings compose up (Postgres, Redis, stripe-mock, RustFS, Jaeger, Airflow), mi
 1. posts a balanced entry and replays the same `Idempotency-Key` (second response carries `Idempotent-Replayed: true`);
 2. pays an invoice: a `PaymentIntent` on stripe-mock, then the signed `payment_intent.succeeded` webhook back to the API, which posts cash against receivables;
 3. settles yesterday and triggers the `partner_daily_report` DAG in Airflow, which writes a CSV per tenant to the S3 bucket;
-4. prints the balances of cash, receivables and revenue, and the links: Jaeger traces, Airflow, `/metrics`.
+4. prints the balances of cash, receivables and revenue, and the links: Jaeger traces, Airflow, `/internal/metrics`.
 
 Then `make console` and open <http://localhost:8001> as `ops` / `ops-demo` for the dashboard, journal, reconciliation workbench and the rest. Every request the demo made is a trace in Jaeger at <http://localhost:16687>, including the outbox write and the Celery delivery that followed it.
 
@@ -47,7 +47,7 @@ Tenant systems ──► POST /entries, /subscriptions, /statements   (X-Api-Key
 Console (Vue 3, Vite, Tailwind, Pinia, Storybook, Cypress) ──► session-authenticated JSON endpoints,
                                                                served by Django + whitenoise
 OpenTelemetry ──► Jaeger 16687 (one trace: request, outbox write, Celery delivery, tenant endpoint)
-/metrics ───────► request latency, posting rate, projection lag, deliveries by state, queue depth
+/internal/metrics ► request latency, posting rate, projection lag, deliveries by state, queue depth
 ```
 
 | Directory | Role | Port |
@@ -179,7 +179,7 @@ The state machine is a transition table in `tally/domain/billing.py`; a Hypothes
 
 **Inbound webhooks.** `POST /webhooks/stripe` verifies `Stripe-Signature` with the SDK (HMAC-SHA256, timestamps older than five minutes rejected), inserts `event.id` into `stripe_events`, returns 200 and hands the row to `process_stripe_event`. A tampered signature is a 400 and nothing is stored; the same event delivered twice is acknowledged and processed once; an intent Tally never created (a `stripe trigger` fixture, say) is acknowledged and books nothing.
 
-**Outbound webhooks.** Tenants register endpoints with `POST /api/webhook-endpoints` and receive the secret once. Events (`invoice.issued`, `invoice.paid`, `subscription.past_due`, `subscription.active`) are written to `webhook_outbox` in the same transaction as the business write, so they commit or roll back with it. `deliver_due_webhooks` sweeps every ten seconds and posts the envelope `{"id", "type", "created_at", "data"}` with:
+**Outbound webhooks.** Tenants register endpoints with `POST /api/webhook-endpoints` and receive the secret once. Events (`entry.posted` for every journal entry, `invoice.issued`, `invoice.paid`, `subscription.past_due`, `subscription.active`, `reconciliation.exception`, `report.ready`) are written to `webhook_outbox` in the same transaction as the business write, so they commit or roll back with it. `deliver_due_webhooks` sweeps every ten seconds and posts the envelope `{"id", "type", "created_at", "data"}` with:
 
 ```
 X-Tally-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>
@@ -254,7 +254,7 @@ More in [`docs/screenshots/`](docs/screenshots/).
 
 **Traces.** OpenTelemetry is configured once in `ApiConfig.ready()`, so Django and the Celery worker set up the same provider: Django, psycopg, Redis, urllib and Celery are auto-instrumented and spans go OTLP/HTTP to the Jaeger container (`OTEL_EXPORTER_OTLP_ENDPOINT`, empty disables export). The interesting hop is the outbox: a delivery is picked up by a Beat sweep, not enqueued from the request, so Celery's own context propagation cannot link it. The outbox row stores the W3C `traceparent` of the request that published the event, `webhook.deliver` continues that context, and urllib forwards it to the tenant. One trace therefore reads `POST api/entries` → SQL → `outbox.publish` → `webhook.deliver` → `POST` to the endpoint; a test asserts the four spans share a trace id and that the receiver saw the `Traceparent` header.
 
-**Metrics.** `GET /metrics` (header `X-Internal-Token`) is Prometheus text. `django-prometheus` records request latency per view. The business numbers are computed from the database at scrape time by one collector, so they are right across every Django and Celery process without in-process counters: `tally_journal_entries_total` (posting rate via `rate()`), `tally_projection_lag_seconds` (`max(journal_entries.posted_at) - account_balances.as_of`, zero by construction today; see [`docs/consistency.md`](docs/consistency.md)), `tally_webhook_deliveries{state=delivered|pending|dead}`, `tally_celery_queue_depth`.
+**Metrics.** `GET /internal/metrics` (header `X-Internal-Token`) is Prometheus text. `django-prometheus` records request latency per view. The business numbers are computed from the database at scrape time by one collector, so they are right across every Django and Celery process without in-process counters: `tally_journal_entries_total` (posting rate via `rate()`), `tally_projection_lag_seconds` (`max(journal_entries.posted_at) - account_balances.as_of`, zero by construction today; see [`docs/consistency.md`](docs/consistency.md)), `tally_webhook_deliveries{state=delivered|pending|dead}`, `tally_celery_queue_depth`.
 
 **Logs.** structlog, JSON on stdout (console renderer under `tally.settings.dev`).
 
@@ -295,7 +295,7 @@ Enforced in CI (`python.yml`, `console.yml`, `airflow.yml`):
 | Concurrency | api | 20 threads on two accounts, idempotent replay under concurrent same-key requests |
 | Integration | api, Celery | Stripe webhooks with recorded events and tampered signatures against `stripe-mock`, outbound delivery and dead-lettering against a local receiver |
 | DAG | airflow | import and structure tests, one `airflow dags test` run |
-| Observability | api | one trace from the request to the tenant endpoint; `/metrics` gauges follow the database |
+| Observability | api | one trace from the request to the tenant endpoint; `/internal/metrics` gauges follow the database |
 | End to end | console | Cypress flows against the production build with `seed_demo`, `cypress-axe` at WCAG 2.2 AA, Lighthouse 90+ on the signed-in dashboard |
 
 ## Phases

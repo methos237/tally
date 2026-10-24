@@ -68,12 +68,11 @@ def entry_row(tenant_id: int, entry_id: int) -> models.JournalEntry:
 
 
 def created(tenant_id: int, entry: JournalEntry) -> Response:
-    """201 with the stored entry, and the `entry.posted` event in the same transaction
-    (the @idempotent wrapper holds it open). One re-read; the response shape is defined once."""
+    """201 with the stored entry. One re-read; the response shape is defined once."""
     assert entry.id is not None
-    data = serializers.EntryOut(entry_row(tenant_id, entry.id)).data
-    outbox.publish(tenant_id, "entry.posted", {"entry": data})
-    return Response(data, status=status.HTTP_201_CREATED)
+    return Response(
+        serializers.EntryOut(entry_row(tenant_id, entry.id)).data, status=status.HTTP_201_CREATED
+    )
 
 
 @extend_schema_view(

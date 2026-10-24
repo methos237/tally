@@ -8,9 +8,9 @@ started=$(date +%s)
 step() { printf '\n\033[1m[%3ss] %s\033[0m\n' "$(( $(date +%s) - started ))" "$*"; }
 
 API=http://localhost:8001
-export DJANGO_SETTINGS_MODULE=tally.settings.dev
-export STRIPE_API_BASE=http://localhost:12111 STRIPE_WEBHOOK_SECRET=whsec_demo
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 INTERNAL_TOKEN=dev-internal-token
+cp -n .env.example .env 2>/dev/null || true   # compose defaults: stripe-mock, RustFS, Jaeger
+set -a; . ./.env; set +a
+export STRIPE_WEBHOOK_SECRET="${STRIPE_WEBHOOK_SECRET:-whsec_demo}" INTERNAL_TOKEN="${INTERNAL_TOKEN:-dev-internal-token}"
 
 step "compose up (Postgres, Redis, stripe-mock, RustFS, Jaeger, Airflow)"
 # --wait fails on the one-shot bucket job exiting 0, so run it on its own afterwards.
@@ -23,7 +23,7 @@ uv run python manage.py migrate -v0
 uv run python manage.py seed_demo
 
 step "start Django, Celery worker and Beat"
-uv run python manage.py runserver 8001 >/tmp/tally-demo-django.log 2>&1 &
+uv run python manage.py runserver --noreload 8001 >/tmp/tally-demo-django.log 2>&1 &
 uv run celery -A tally worker -l warning --pool solo >/tmp/tally-demo-worker.log 2>&1 &
 uv run celery -A tally beat -l warning >/tmp/tally-demo-beat.log 2>&1 &
 trap 'kill $(jobs -p) 2>/dev/null' EXIT
@@ -34,20 +34,18 @@ auth=(-H "X-Api-Key: $KEY" -H "Content-Type: application/json")
 step "post an entry, then replay the same Idempotency-Key"
 body='{"occurred_at":"2026-10-24T09:00:00Z","source":{"type":"demo","id":"1"},"lines":[{"account":"1200","amount":"120.000000","currency":"USD"},{"account":"4000","amount":"-120.000000","currency":"USD"}]}'
 idem="demo-$(date +%s)"
-curl -s "${auth[@]}" -H "Idempotency-Key: $idem" -d "$body" -D - -o /dev/null "$API/api/entries" | grep -E "^HTTP|Idempotent-Replayed" || true
+curl -s "${auth[@]}" -H "Idempotency-Key: $idem" -d "$body" -D - -o /dev/null "$API/api/entries" | grep -E "^HTTP|Idempotent-Replayed"
 curl -s "${auth[@]}" -H "Idempotency-Key: $idem" -d "$body" -D - -o /dev/null "$API/api/entries" | grep -E "^HTTP|Idempotent-Replayed"
 
 step "pay an invoice: PaymentIntent on stripe-mock, signed webhook back to the API"
 uv run python manage.py demo_payment --tenant "Acme Corp"
 
 step "settle yesterday and run the partner_daily_report DAG"
-day=$(date -u -v-1d +%F 2>/dev/null || date -u -d yesterday +%F)
-curl -s -X POST -H "X-Internal-Token: $INTERNAL_TOKEN" "$API/internal/settlement/$day" >/dev/null
+uv run python manage.py shell -c "from tally.adapters.tasks import settle_yesterday; print('settled', settle_yesterday())"
 run_id="demo_$(date +%s)"
 docker compose exec -T airflow airflow dags trigger partner_daily_report --run-id "$run_id" >/dev/null 2>&1
 for _ in $(seq 1 60); do
-  state=$(docker compose exec -T airflow airflow dags list-runs partner_daily_report -o json 2>/dev/null \
-    | python3 -c "import sys,json; s=sys.stdin.read(); runs=json.loads(s[s.index('[\n'):] if '[\n' in s else s[s.rindex('['):]); print(next((r['state'] for r in runs if r['run_id']=='$run_id'),'queued'))")
+  state=$(docker compose exec -T airflow airflow dags state partner_daily_report "$run_id" 2>/dev/null | tail -1)
   [[ "$state" == "success" || "$state" == "failed" ]] && break
   sleep 3
 done
@@ -62,4 +60,4 @@ done
 step "done in $(( $(date +%s) - started ))s"
 echo "traces:   http://localhost:16687/search?service=tally"
 echo "airflow:  http://localhost:8081   console: $API (ops / ops-demo, after 'make console')"
-echo "metrics:  curl -H 'X-Internal-Token: $INTERNAL_TOKEN' $API/metrics"
+echo "metrics:  curl -H 'X-Internal-Token: $INTERNAL_TOKEN' $API/internal/metrics"

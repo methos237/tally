@@ -14,7 +14,7 @@ from tests.api.test_internal import TOKEN
 
 
 def scrape() -> dict[str, dict[tuple[tuple[str, str], ...], float]]:
-    response = Client().get("/metrics", headers=TOKEN)
+    response = Client().get("/internal/metrics", headers=TOKEN)
     assert response.status_code == 200
     families = text_string_to_metric_families(response.content.decode())
     return {f.name: {tuple(sorted(s.labels.items())): s.value for s in f.samples} for f in families}
@@ -22,7 +22,7 @@ def scrape() -> dict[str, dict[tuple[tuple[str, str], ...], float]]:
 
 @pytest.mark.django_db
 def test_metrics_need_the_internal_token() -> None:
-    assert Client().get("/metrics").status_code == 401
+    assert Client().get("/internal/metrics").status_code == 401
 
 
 @pytest.mark.django_db

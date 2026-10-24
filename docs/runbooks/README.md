@@ -12,7 +12,7 @@ recurring. All commands run from the repo root with compose up and `.env` presen
 
 Where to look:
 
-- `/metrics` (header `X-Internal-Token`, value of `INTERNAL_TOKEN`) for the gauges named above
+- `/internal/metrics` (header `X-Internal-Token`, value of `INTERNAL_TOKEN`) for the gauges named above
   and request latency per view.
 - Jaeger at <http://localhost:16687>, service `tally`: one trace per API request, including the
   outbox write and the Celery delivery that followed it.

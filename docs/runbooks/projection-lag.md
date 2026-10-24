@@ -15,7 +15,7 @@ value means the fold was bypassed or the table was changed outside the posting p
 ## Confirm
 
 ```bash
-curl -s -H "X-Internal-Token: $INTERNAL_TOKEN" localhost:8001/metrics | grep tally_projection_lag
+curl -s -H "X-Internal-Token: $INTERNAL_TOKEN" localhost:8001/internal/metrics | grep tally_projection_lag
 rtk psql postgresql://tally:tally@localhost:5435/tally -c "
   SELECT a.code, b.balance, b.as_of, s.total, s.last_posted
   FROM account_balances b JOIN accounts a ON a.id = b.account_id
@@ -36,7 +36,7 @@ uv run python manage.py replay_balances
 ```
 
 Rebuilds every balance from the journal in one statement. Safe to run while posting
-continues (the upsert takes the greater `as_of`). Then rescrape `/metrics`; lag returns to 0.
+continues (the upsert takes the greater `as_of`). Then rescrape `/internal/metrics`; lag returns to 0.
 
 ## Find the cause
 

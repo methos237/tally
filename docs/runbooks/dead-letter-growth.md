@@ -14,7 +14,7 @@ retries it on its own.
 ## Confirm
 
 ```bash
-curl -s -H "X-Internal-Token: $INTERNAL_TOKEN" localhost:8001/metrics | grep tally_webhook_deliveries
+curl -s -H "X-Internal-Token: $INTERNAL_TOKEN" localhost:8001/internal/metrics | grep tally_webhook_deliveries
 rtk psql postgresql://tally:tally@localhost:5435/tally -c "
   SELECT e.url, count(*), min(o.dead_at), max(o.last_status), max(o.last_error)
   FROM webhook_outbox o JOIN webhook_endpoints e ON e.id = o.endpoint_id
