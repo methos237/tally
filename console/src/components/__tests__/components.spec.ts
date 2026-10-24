@@ -48,7 +48,7 @@ describe('TallyTable', () => {
   it('renders a header per column, a row per item, and emits the selected row', async () => {
     const rows = [{ code: '1000', name: 'Cash' }]
     const wrapper = mount(TallyTable, {
-      props: { columns: [...columns], rows, rowKey: 'code', caption: 'Accounts' },
+      props: { columns, rows, rowKey: 'code', caption: 'Accounts' },
       slots: { 'cell-name': '<b>{{ params.value }}</b>' },
     })
     expect(wrapper.findAll('th').map((th) => th.text())).toEqual(['Code', 'Name'])
@@ -59,7 +59,7 @@ describe('TallyTable', () => {
   it('shows an empty state when there are no rows', () => {
     const wrapper = mount(TallyTable, {
       props: {
-        columns: [...columns],
+        columns,
         rows: [],
         rowKey: 'code',
         caption: 'Accounts',

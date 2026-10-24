@@ -3,10 +3,10 @@ view then authenticates them through ConsoleSessionAuthentication as their tenan
 
 from typing import Any
 
-from django.contrib.auth import authenticate, get_user, login, logout
+from django.contrib.auth import authenticate, login, logout
 from django.views.decorators.csrf import ensure_csrf_cookie
 from drf_spectacular.utils import extend_schema
-from rest_framework import serializers, status
+from rest_framework import status
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
@@ -14,48 +14,21 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from tally.adapters.models import Operator
+from tally.api.auth import ConsoleSessionAuthentication
 from tally.api.problems import Problem
-from tally.api.serializers import ProblemOut
-
-
-class LoginIn(serializers.Serializer[Any]):
-    username = serializers.CharField(max_length=150)
-    password = serializers.CharField(max_length=128, style={"input_type": "password"})
-
-
-class SessionOut(serializers.Serializer[Any]):
-    username = serializers.CharField()
-    tenant_id = serializers.IntegerField()
-    tenant = serializers.CharField()
-
-
-def session_body(operator: Operator) -> dict[str, Any]:
-    return {
-        "username": operator.user.get_username(),
-        "tenant_id": operator.tenant_id,
-        "tenant": operator.tenant.name,
-    }
-
-
-def current_operator(request: Request) -> Operator | None:
-    # DRF sets request.user to None on unauthenticated views; read the session directly.
-    user = get_user(request._request)
-    if not user.is_authenticated:
-        return None
-    return Operator.objects.select_related("user", "tenant").filter(user_id=user.pk).first()
+from tally.api.serializers import LoginIn, ProblemOut, SessionOut
 
 
 @extend_schema(
     responses={200: SessionOut, 401: ProblemOut}, auth=[], description="Also sets the CSRF cookie."
 )
 @api_view(["GET"])
-@authentication_classes([])
+@authentication_classes([ConsoleSessionAuthentication])
 @permission_classes([AllowAny])
 def session(request: Request) -> Response:
-    operator = current_operator(request)
-    if operator is None:
+    if request.auth is None:
         raise Problem(401, "Not signed in")
-    return Response(session_body(operator))
+    return Response(SessionOut(request.auth).data)
 
 
 session = ensure_csrf_cookie(session)  # the login form needs the token before any POST
@@ -69,16 +42,12 @@ def login_view(request: Request) -> Response:
     SessionAuthentication().enforce_csrf(request)  # login CSRF: the form must carry the token
     body = LoginIn(data=request.data)
     body.is_valid(raise_exception=True)
-    user = authenticate(request._request, **body.validated_data)
-    operator = (
-        Operator.objects.select_related("user", "tenant").filter(user=user).first()
-        if user is not None
-        else None
-    )
+    user: Any = authenticate(request._request, **body.validated_data)
+    operator = Operator.for_user(user) if user is not None else None
     if operator is None:
         raise Problem(401, "Wrong username or password")
-    login(request._request, operator.user)
-    return Response(session_body(operator))
+    login(request._request, user)
+    return Response(SessionOut(operator).data)
 
 
 @extend_schema(request=None, responses={204: None})

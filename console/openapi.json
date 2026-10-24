@@ -1468,6 +1468,7 @@
             },
             "MeOut": {
                 "type": "object",
+                "description": "Serializes a Tenant.",
                 "properties": {
                     "tenant_id": {
                         "type": "integer"
@@ -1674,6 +1675,7 @@
             },
             "SessionOut": {
                 "type": "object",
+                "description": "Serializes an Operator.",
                 "properties": {
                     "username": {
                         "type": "string"

@@ -62,7 +62,7 @@ const invoiceColumns = [
   <h2 class="text-xl font-semibold">Subscriptions</h2>
   <TallyTable
     class="mt-4"
-    :columns="[...subscriptionColumns]"
+    :columns="subscriptionColumns"
     :rows="subscriptionRows"
     row-key="id"
     caption="Subscriptions"
@@ -84,7 +84,7 @@ const invoiceColumns = [
   </label>
   <TallyTable
     class="mt-3"
-    :columns="[...invoiceColumns]"
+    :columns="invoiceColumns"
     :rows="invoiceRows"
     row-key="id"
     caption="Invoices"

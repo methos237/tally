@@ -49,7 +49,7 @@ const touching = useQuery({
   <h2 class="text-xl font-semibold">Accounts</h2>
   <div class="mt-4 grid gap-6" :class="selected ? 'lg:grid-cols-[1fr_1fr]' : ''">
     <TallyTable
-      :columns="[...columns]"
+      :columns="columns"
       :rows="accounts.data.value?.results ?? []"
       row-key="code"
       caption="Chart of accounts"

@@ -214,6 +214,7 @@ describe('ReconciliationView', () => {
     expect(wrapper.text()).toContain('#7 (exact)')
     await wrapper.get('article button').trigger('click') // Resolve on the ExceptionCard
     expect(wrapper.find('dialog').exists()).toBe(true)
+    await flushPromises() // candidates load once the dialog is open
     expect(wrapper.get('dialog').text()).toContain('#7 2026-02-01 payment p1') // candidate within 3 days
     await wrapper.get('dialog textarea').setValue('Processor fee')
     await wrapper.get('dialog form').trigger('submit')

@@ -38,8 +38,7 @@ def health(_request: HttpRequest) -> JsonResponse:
 @api_view(["GET"])
 def me(request: Request) -> Response:
     """Who am I: lets an integrator confirm a key before posting anything."""
-    tenant = tenant_of(request)
-    return Response({"tenant_id": tenant.id, "tenant": tenant.name})
+    return Response(serializers.MeOut(tenant_of(request)).data)
 
 
 class Cursor(CursorPagination):

@@ -1,4 +1,4 @@
-// Runs against Django (8001, seed_demo applied) behind the Vite dev server (5173).
+// Runs against Django on 8001 serving the production build, seed_demo applied.
 
 describe('sign in', () => {
   it('redirects a visitor to the login page and signs the operator in', () => {

@@ -50,7 +50,7 @@ jobs:
       - run: npx vitest run
       - run: npm run build
       - run: npm run build-storybook
-      # Cypress against the real stack: Django with seed_demo behind the Vite dev server.
+      # Cypress against the real stack: Django with seed_demo serving the production build.
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -58,11 +58,10 @@ jobs:
         working-directory: .
       - run: uv run python manage.py migrate && uv run python manage.py seed_demo
         working-directory: .
+      # Django serves console/dist (built above) for both Cypress and Lighthouse.
       - run: |
           (cd .. && uv run python manage.py runserver 8001 > /tmp/django.log 2>&1 &)
-          npx vite --mode e2e --port 5173 > /tmp/vite.log 2>&1 &
           curl -sf --retry 30 --retry-connrefused --retry-delay 1 http://localhost:8001/health
-          curl -sf --retry 30 --retry-connrefused --retry-delay 1 -o /dev/null http://localhost:5173/
       - run: npx cypress install
       - run: npm run test:e2e
       # Lighthouse against the production build served by Django + whitenoise, signed in.
@@ -74,4 +73,4 @@ jobs:
           echo "LHCI_EXTRA_HEADERS={\"Cookie\":\"sessionid=$(awk '/sessionid/ {print $7}' jar)\"}" >> "$GITHUB_ENV"
       - run: npx -y @lhci/cli@0.15.1 autorun
       - if: failure()
-        run: tail -n 50 /tmp/django.log /tmp/vite.log
+        run: tail -n 50 /tmp/django.log

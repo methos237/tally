@@ -34,7 +34,7 @@ class ConsoleSessionAuthentication(authentication.SessionAuthentication):
         user = request._request.user
         if not user.is_authenticated:
             return None
-        operator = Operator.objects.select_related("tenant").filter(user_id=user.pk).first()
+        operator = Operator.for_user(user)
         if operator is None:
             return None
         self.enforce_csrf(request)

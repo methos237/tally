@@ -474,6 +474,7 @@ export interface components {
             username: string;
             password: string;
         };
+        /** @description Serializes a Tenant. */
         MeOut: {
             tenant_id: number;
             tenant: string;
@@ -563,6 +564,7 @@ export interface components {
             /** Format: date-time */
             occurred_at?: string;
         };
+        /** @description Serializes an Operator. */
         SessionOut: {
             username: string;
             tenant_id: number;

@@ -69,10 +69,7 @@ const redeliver = useMutation({
         },
       }),
     ),
-  onSuccess: () => {
-    queryClient.invalidateQueries({ queryKey: ['dead-letters'] })
-    queryClient.invalidateQueries({ queryKey: ['webhook-endpoints'] })
-  },
+  onSuccess: () => queryClient.invalidateQueries(),
 })
 </script>
 
@@ -80,7 +77,7 @@ const redeliver = useMutation({
   <h2 class="text-xl font-semibold">Webhook endpoints</h2>
   <TallyTable
     class="mt-4"
-    :columns="[...endpointColumns]"
+    :columns="endpointColumns"
     :rows="endpointRows"
     row-key="id"
     caption="Webhook endpoints"
@@ -97,7 +94,7 @@ const redeliver = useMutation({
     </p>
     <TallyTable
       class="mt-3"
-      :columns="[...deadColumns]"
+      :columns="deadColumns"
       :rows="deadRows"
       row-key="id"
       caption="Dead letters"

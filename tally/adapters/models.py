@@ -159,6 +159,12 @@ class Operator(models.Model):
     class Meta:
         db_table = "operators"
 
+    @classmethod
+    def for_user(cls, user: object) -> "Operator | None":
+        return (
+            cls.objects.select_related("tenant").filter(user_id=getattr(user, "pk", None)).first()
+        )
+
 
 class IdempotencyRecord(models.Model):
     """One row per (tenant, Idempotency-Key). Claimed inside the write's transaction;

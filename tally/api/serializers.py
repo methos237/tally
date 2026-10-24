@@ -33,8 +33,23 @@ class ProblemOut(serializers.Serializer[Any]):
 
 
 class MeOut(serializers.Serializer[Any]):
+    """Serializes a Tenant."""
+
+    tenant_id = serializers.IntegerField(source="id")
+    tenant = serializers.CharField(source="name")
+
+
+class LoginIn(serializers.Serializer[Any]):
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(max_length=128, style={"input_type": "password"})
+
+
+class SessionOut(serializers.Serializer[Any]):
+    """Serializes an Operator."""
+
+    username = serializers.CharField(source="user.username")
     tenant_id = serializers.IntegerField()
-    tenant = serializers.CharField()
+    tenant = serializers.CharField(source="tenant.name")
 
 
 class LineIn(serializers.Serializer[Any]):
@@ -89,7 +104,7 @@ class AccountOut(serializers.ModelSerializer[models.Account]):
 
     def get_balance(self, account: models.Account) -> str:
         row = getattr(account, "balance", None)  # the projection row; absent until first post
-        return str(row.balance if row else Decimal(0).quantize(Decimal("0.000001")))
+        return str(AmountField().to_representation(row.balance if row else Decimal(0)))
 
 
 class BalanceOut(serializers.Serializer[Any]):

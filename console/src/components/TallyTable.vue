@@ -4,7 +4,7 @@ import EmptyState from './EmptyState.vue'
 export type Column<Row> = { key: keyof Row & string; label: string; align?: 'left' | 'right' }
 
 defineProps<{
-  columns: Column<Row>[]
+  columns: readonly Column<Row>[]
   rows: Row[]
   rowKey: keyof Row & string
   caption: string

@@ -222,14 +222,14 @@ cd console && npm ci && npm run dev    # Vite on 5173, proxies /api and /console
 uv run python manage.py seed_demo      # also creates the operator: ops / ops-demo
 make console                           # production build; `make dev` then serves it on 8001 via whitenoise
 npm run storybook                      # component library on 6006
-npm run test:e2e                       # Cypress against 5173 (needs Django on 8001 with seed_demo)
+npm run test:e2e                       # Cypress against 8001 (make console, make dev, seed_demo)
 ```
 
 The component library is in Storybook with the a11y addon treating violations as errors, published to GitHub Pages at <https://methos237.github.io/tally/>: `TallyTable`, `MoneyCell` (decimal strings formatted per currency, never through a float), `StatusBadge`, `JournalLines` (signed amounts split into debit and credit), `ExceptionCard`, `Pagination` (cursor URLs), `EmptyState`. Each component has a Vitest unit test.
 
 Pages: dashboard (balances by type, open invoices, dead letters, open exceptions), journal browser (filters, cursor pagination, entry drawer with lines), accounts with balance as of a date and latest entries, subscriptions and invoices, webhook endpoints with dead letters and a redeliver button, reconciliation workbench (statement lines beside exceptions, candidate cash entries within the matching window, a resolve dialog that explains or posts an adjusting entry) and the partner report list with downloads streamed through the API so the bucket stays private.
 
-Cypress drives sign in, the journal, resolving an exception and redelivering a dead letter against Django with `seed_demo`, and `cypress-axe` checks every page at WCAG 2.2 AA. Console CI brings up Postgres, Redis and RustFS as service containers for it, then runs Lighthouse against the production build served by Django with a 90+ budget on performance and accessibility.
+Cypress drives sign in, the journal, resolving an exception and redelivering a dead letter against Django serving the production build with `seed_demo`, and `cypress-axe` checks every page at WCAG 2.2 AA. Console CI brings up Postgres, Redis and RustFS as service containers for it, then runs Lighthouse against the production build served by Django with a 90+ budget on performance and accessibility.
 
 | Dashboard | Reconciliation workbench |
 |---|---|

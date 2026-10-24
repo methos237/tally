@@ -29,7 +29,7 @@ const columns = [
   <h2 class="text-xl font-semibold">Partner daily reports</h2>
   <TallyTable
     class="mt-4"
-    :columns="[...columns]"
+    :columns="columns"
     :rows="rows"
     row-key="day"
     caption="Reports"

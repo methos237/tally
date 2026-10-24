@@ -2,9 +2,9 @@
 import { computed } from 'vue'
 
 import MoneyCell from './MoneyCell.vue'
-import type { Currency } from './money'
+import type { components } from '@/api/schema'
 
-export type Line = { account: string; amount: string; currency: Currency }
+export type Line = components['schemas']['LineOut']
 
 const props = defineProps<{ lines: Line[] }>()
 

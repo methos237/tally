@@ -2,7 +2,7 @@ import createClient, { type Middleware } from 'openapi-fetch'
 
 import type { paths } from './schema'
 
-export function csrfToken(): string {
+function csrfToken(): string {
   return document.cookie.match(/(?:^|; )csrftoken=([^;]*)/)?.[1] ?? ''
 }
 
@@ -23,8 +23,6 @@ export const api = createClient<paths>({
 })
 api.use(csrf)
 
-export type Problem = { type: string; title: string; status: number; detail: string }
-
 /** Every write needs a fresh Idempotency-Key; a retry of the same user action reuses it. */
 export function idempotencyKey(): { 'Idempotency-Key': string } {
   return { 'Idempotency-Key': crypto.randomUUID() }
@@ -36,8 +34,7 @@ export async function unwrap<T>(
 ): Promise<T> {
   const { data, error, response } = await call
   if (error !== undefined || data === undefined) {
-    const detail = (error as Partial<Problem> | undefined)?.detail ?? response.statusText
-    throw Object.assign(new Error(detail), { status: response.status })
+    throw new Error((error as { detail?: string } | undefined)?.detail ?? response.statusText)
   }
   return data
 }

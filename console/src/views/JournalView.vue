@@ -11,12 +11,13 @@ import { formatDateTime } from '@/components/format'
 
 type Entry = components['schemas']['EntryOut']
 
-const filters = reactive({ source_type: '', source_id: '', account: '' })
+const draft = reactive({ source_type: '', source_id: '', account: '' })
+const filters = ref({ ...draft })
 const cursor = ref<string | undefined>()
 const selected = ref<Entry | null>(null)
 
 const query = computed(() => ({
-  ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)),
+  ...Object.fromEntries(Object.entries(filters.value).filter(([, v]) => v)),
   cursor: cursor.value,
 }))
 const entries = useQuery({
@@ -42,6 +43,7 @@ const columns = [
 ] as const
 
 function applyFilters() {
+  filters.value = { ...draft }
   cursor.value = undefined
 }
 </script>
@@ -51,22 +53,22 @@ function applyFilters() {
   <form class="mt-4 flex flex-wrap items-end gap-3 text-sm" @submit.prevent="applyFilters">
     <label class="flex flex-col gap-1">
       <span>Source type</span>
-      <input v-model.trim="filters.source_type" class="rounded border p-1" />
+      <input v-model.trim="draft.source_type" class="rounded border p-1" />
     </label>
     <label class="flex flex-col gap-1">
       <span>Source id</span>
-      <input v-model.trim="filters.source_id" class="rounded border p-1" />
+      <input v-model.trim="draft.source_id" class="rounded border p-1" />
     </label>
     <label class="flex flex-col gap-1">
       <span>Account code</span>
-      <input v-model.trim="filters.account" class="rounded border p-1" />
+      <input v-model.trim="draft.account" class="rounded border p-1" />
     </label>
     <button type="submit" class="rounded border px-3 py-1">Filter</button>
   </form>
   <div class="mt-4 grid gap-6" :class="selected ? 'lg:grid-cols-[2fr_1fr]' : ''">
     <div>
       <TallyTable
-        :columns="[...columns]"
+        :columns="columns"
         :rows="rows"
         row-key="id"
         caption="Journal entries"

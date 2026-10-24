@@ -16,7 +16,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from tally.adapters import billing, reconciliation
+from tally.adapters import billing, outbox, reconciliation
 from tally.adapters.models import (
     Account,
     Customer,
@@ -138,15 +138,14 @@ class Command(BaseCommand):
             tenant=tenant, url="http://localhost:9/hooks/tally", secret=WebhookEndpoint.new_secret()
         )
         for n in range(2):
-            at = DEMO_DATE - timedelta(days=2 - n)
-            OutboxMessage.objects.create(
-                tenant=tenant,
-                endpoint=endpoint,
-                event_type="invoice.paid",
-                payload={"invoice_id": 1000 + n, "amount": "49.000000", "currency": "USD"},
-                attempts=5,
-                next_attempt_at=at,
-                dead_at=at,
+            outbox.publish(
+                tenant.id,
+                "invoice.paid",
+                {"invoice_id": 1000 + n, "amount": "49.000000", "currency": "USD"},
+            )
+            OutboxMessage.objects.filter(endpoint=endpoint, dead_at__isnull=True).update(
+                attempts=OutboxMessage.MAX_ATTEMPTS,
+                dead_at=DEMO_DATE - timedelta(days=2 - n),
                 last_error="connection refused",
             )
 

@@ -1,19 +1,21 @@
 <script setup lang="ts">
 import MoneyCell from './MoneyCell.vue'
 import StatusBadge from './StatusBadge.vue'
-import type { Currency } from './money'
+import type { components } from '@/api/schema'
 
-export type ReconciliationException = {
-  id: number
-  line_no: number
-  reference: string
-  reason: string
-  difference: string
-  currency: Currency
-  resolved_at?: string | null
-  resolution?: string
-  explanation?: string
-}
+// Pick keeps story and test fixtures partial; the schema is the source of the shape.
+export type ReconciliationException = Pick<
+  components['schemas']['ExceptionOut'],
+  | 'id'
+  | 'line_no'
+  | 'reference'
+  | 'reason'
+  | 'difference'
+  | 'currency'
+  | 'resolved_at'
+  | 'resolution'
+  | 'explanation'
+>
 
 defineProps<{ exception: ReconciliationException }>()
 const emit = defineEmits<{ resolve: [exception: ReconciliationException] }>()

@@ -51,7 +51,7 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue') },
-    ...pages.map(({ path, name, component }) => ({ path, name, component })),
+    ...pages,
   ],
 })
 

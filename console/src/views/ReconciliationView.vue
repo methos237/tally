@@ -43,14 +43,15 @@ const lineColumns = [
   { key: 'match', label: 'Match' },
 ] as const
 
+const resolving = ref<ReconciliationException | null>(null)
+
 // Candidates: cash entries within three days of the excepted line, the window the matcher uses.
 const cash = useQuery({
   queryKey: ['entries', { account: '1000', page_size: 500 }],
-  enabled: computed(() => statementId.value !== null),
+  enabled: computed(() => resolving.value !== null),
   queryFn: () =>
     unwrap(api.GET('/api/entries', { params: { query: { account: '1000', page_size: 500 } } })),
 })
-const resolving = ref<ReconciliationException | null>(null)
 const candidates = computed(() => {
   const line = statement.data.value?.lines.find((l) => l.line_no === resolving.value?.line_no)
   if (!line) return []
@@ -71,12 +72,8 @@ function openResolve(exception: ReconciliationException) {
   Object.assign(form, { action: 'explain', account: '', explanation: '' })
 }
 
-function invalidate() {
-  queryClient.invalidateQueries({ queryKey: ['statement'] })
-  queryClient.invalidateQueries({ queryKey: ['statements'] })
-  queryClient.invalidateQueries({ queryKey: ['exceptions'] })
-  queryClient.invalidateQueries({ queryKey: ['entries'] })
-}
+// After a write everything on screen may be stale (balances included); refetch it all.
+const invalidate = () => queryClient.invalidateQueries()
 
 const reconcile = useMutation({
   mutationFn: () =>
@@ -148,7 +145,7 @@ const resolve = useMutation({
       </div>
       <div class="mt-4 grid gap-6 xl:grid-cols-[3fr_2fr]">
         <TallyTable
-          :columns="[...lineColumns]"
+          :columns="lineColumns"
           :rows="lineRows"
           row-key="line_no"
           caption="Statement lines"

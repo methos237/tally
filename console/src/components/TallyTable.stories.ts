@@ -15,18 +15,17 @@ const columns = [
   { key: 'balance', label: 'Balance', align: 'right' },
 ] as const
 
-// Untyped Meta: generic components do not fit Meta<typeof Component> yet.
 // Generic components do not fit Meta<typeof Component> yet; widen to Component.
 const meta: Meta = { component: TallyTable as ConcreteComponent, title: 'Ledger/TallyTable' }
 export default meta
 type Story = StoryObj<typeof meta>
 
 export const Accounts: Story = {
-  args: { columns: [...columns], rows, rowKey: 'code', caption: 'Accounts' },
+  args: { columns, rows, rowKey: 'code', caption: 'Accounts' },
 }
 export const Empty: Story = {
   args: {
-    columns: [...columns],
+    columns,
     rows: [],
     rowKey: 'code',
     caption: 'Accounts',

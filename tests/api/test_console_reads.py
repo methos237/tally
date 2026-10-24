@@ -87,7 +87,8 @@ def test_reports_list_and_download(
 
     download = client.get("/api/reports/2026-02-01")
     assert download.status_code == 200 and download["Content-Type"] == "text/csv"
-    assert download.content.decode().startswith("section,key,label,count,amount,currency")
+    body = b"".join(download.streaming_content).decode()
+    assert body.startswith("section,key,label,count,amount,currency")
 
     assert other_client.get("/api/reports/2026-02-01").status_code == 404
     assert client.get("/api/reports/2025-01-01").status_code == 404

@@ -1,15 +1,14 @@
 from django.conf import settings
-from django.http import FileResponse, Http404, HttpRequest
+from django.http import HttpRequest, HttpResponseBase
 from django.urls import include, path, re_path
+from django.views.static import serve
 
 
-def console_index(request: HttpRequest) -> FileResponse:
+def console_index(request: HttpRequest) -> HttpResponseBase:
     """SPA fallback: any path that is not an API route gets the console's index.html, so
-    a deep link like /journal loads the app and Vue Router takes it from there."""
-    index = settings.CONSOLE_DIST / "index.html"
-    if not index.is_file():
-        raise Http404("console not built; run `npm run build` in console/")
-    return FileResponse(index.open("rb"), content_type="text/html")
+    a deep link like /journal loads the app and Vue Router takes it from there.
+    404 until `npm run build` has run in console/."""
+    return serve(request, "index.html", document_root=str(settings.CONSOLE_DIST))
 
 
 urlpatterns = [
