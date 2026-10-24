@@ -15,6 +15,27 @@ defaults:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: tally
+          POSTGRES_USER: tally
+          POSTGRES_PASSWORD: tally
+        ports: ["5435:5432"]
+        options: --health-cmd "pg_isready -U tally" --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6380:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+      s3:
+        image: rustfs/rustfs:latest
+        env:
+          RUSTFS_ACCESS_KEY: tally
+          RUSTFS_SECRET_KEY: tally12345
+        ports: ["9000:9000"]
+    env:
+      DJANGO_SETTINGS_MODULE: tally.settings.dev
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -28,3 +49,28 @@ jobs:
       - run: npm run typecheck
       - run: npx vitest run
       - run: npm run build
+      - run: npm run build-storybook
+      # Cypress against the real stack: Django with seed_demo serving the production build.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+        working-directory: .
+      - run: uv run python manage.py migrate && uv run python manage.py seed_demo
+        working-directory: .
+      # Django serves console/dist (built above) for both Cypress and Lighthouse.
+      - run: |
+          (cd .. && uv run python manage.py runserver 8001 > /tmp/django.log 2>&1 &)
+          curl -sf --retry 30 --retry-connrefused --retry-delay 1 http://localhost:8001/health
+      - run: npx cypress install
+      - run: npm run test:e2e
+      # Lighthouse against the production build served by Django + whitenoise, signed in.
+      - run: |
+          curl -sf -c jar -o /dev/null http://localhost:8001/console/session || true
+          TOKEN=$(awk '/csrftoken/ {print $7}' jar)
+          curl -sf -b jar -c jar -H "X-CSRFToken: $TOKEN" -H "Content-Type: application/json" \
+            -d '{"username":"ops","password":"ops-demo"}' http://localhost:8001/console/login
+          echo "LHCI_EXTRA_HEADERS={\"Cookie\":\"sessionid=$(awk '/sessionid/ {print $7}' jar)\"}" >> "$GITHUB_ENV"
+      - run: npx -y @lhci/cli@0.15.1 autorun
+      - if: failure()
+        run: tail -n 50 /tmp/django.log

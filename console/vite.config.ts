@@ -6,7 +6,7 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(() => ({
   plugins: [vue(), vueDevTools(), tailwindcss()],
   resolve: {
     alias: {
@@ -14,6 +14,6 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: { '/health': 'http://localhost:8001', '/api': 'http://localhost:8001' },
+    proxy: { '/api': 'http://localhost:8001', '/console': 'http://localhost:8001' },
   },
-})
+}))

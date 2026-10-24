@@ -23,6 +23,35 @@ class AmountField(serializers.DecimalField):
         return super().to_internal_value(data)
 
 
+class ProblemOut(serializers.Serializer[Any]):
+    """RFC 9457 body every error carries; see tally.api.problems."""
+
+    type = serializers.URLField()
+    title = serializers.CharField()
+    status = serializers.IntegerField()
+    detail = serializers.CharField()
+
+
+class MeOut(serializers.Serializer[Any]):
+    """Serializes a Tenant."""
+
+    tenant_id = serializers.IntegerField(source="id")
+    tenant = serializers.CharField(source="name")
+
+
+class LoginIn(serializers.Serializer[Any]):
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(max_length=128, style={"input_type": "password"})
+
+
+class SessionOut(serializers.Serializer[Any]):
+    """Serializes an Operator."""
+
+    username = serializers.CharField(source="user.username")
+    tenant_id = serializers.IntegerField()
+    tenant = serializers.CharField(source="tenant.name")
+
+
 class LineIn(serializers.Serializer[Any]):
     account = serializers.CharField(max_length=32, help_text="account code, e.g. 1200")
     amount = AmountField()
@@ -67,9 +96,15 @@ class EntryOut(serializers.ModelSerializer[models.JournalEntry]):
 
 
 class AccountOut(serializers.ModelSerializer[models.Account]):
+    balance = serializers.SerializerMethodField()
+
     class Meta:
         model = models.Account
-        fields = ["id", "code", "name", "type", "currency"]
+        fields = ["id", "code", "name", "type", "currency", "balance"]
+
+    def get_balance(self, account: models.Account) -> str:
+        row = getattr(account, "balance", None)  # the projection row; absent until first post
+        return str(AmountField().to_representation(row.balance if row else Decimal(0)))
 
 
 class BalanceOut(serializers.Serializer[Any]):
@@ -84,9 +119,14 @@ class WebhookEndpointIn(serializers.Serializer[Any]):
 
 
 class WebhookEndpointOut(serializers.ModelSerializer[models.WebhookEndpoint]):
+    dead_letters = serializers.SerializerMethodField()
+
     class Meta:
         model = models.WebhookEndpoint
-        fields = ["id", "url", "created_at", "disabled_at"]
+        fields = ["id", "url", "created_at", "disabled_at", "dead_letters"]
+
+    def get_dead_letters(self, endpoint: models.WebhookEndpoint) -> int:
+        return int(getattr(endpoint, "dead_letters", 0))  # annotated by the list view
 
 
 class WebhookEndpointCreated(WebhookEndpointOut):
@@ -109,6 +149,59 @@ class DeadLetterOut(serializers.ModelSerializer[models.OutboxMessage]):
             "last_error",
             "dead_at",
         ]
+
+
+class SubscriptionOut(serializers.ModelSerializer[models.Subscription]):
+    customer = serializers.CharField(source="customer.name")
+    plan = serializers.CharField(source="plan.code")
+    plan_name = serializers.CharField(source="plan.name")
+    amount = AmountField(source="plan.amount")
+    currency = serializers.ChoiceField(choices=CURRENCIES, source="plan.currency")
+    interval = serializers.ChoiceField(choices=["month", "year"], source="plan.interval")
+    status = serializers.ChoiceField(choices=["active", "past_due", "canceled"])
+
+    class Meta:
+        model = models.Subscription
+        fields = [
+            "id",
+            "customer",
+            "plan",
+            "plan_name",
+            "amount",
+            "currency",
+            "interval",
+            "status",
+            "started_at",
+            "billed_through",
+        ]
+
+
+class InvoiceOut(serializers.ModelSerializer[models.Invoice]):
+    customer = serializers.CharField(source="subscription.customer.name")
+    status = serializers.ChoiceField(choices=["open", "paid"])
+
+    class Meta:
+        model = models.Invoice
+        fields = [
+            "id",
+            "subscription",
+            "customer",
+            "description",
+            "period_start",
+            "period_end",
+            "amount",
+            "currency",
+            "status",
+            "issued_at",
+            "paid_at",
+        ]
+
+
+class ReportOut(serializers.Serializer[Any]):
+    day = serializers.DateField()
+    key = serializers.CharField()
+    size = serializers.IntegerField()
+    last_modified = serializers.DateTimeField()
 
 
 class ExceptionOut(serializers.ModelSerializer[models.ReconciliationException]):
@@ -153,22 +246,18 @@ class StatementLineOut(serializers.ModelSerializer[models.StatementLine]):
         ]
 
 
-class StatementOut(serializers.ModelSerializer[models.Statement]):
+class StatementSummaryOut(serializers.ModelSerializer[models.Statement]):
+    class Meta:
+        model = models.Statement
+        fields = ["id", "source", "period_start", "period_end", "uploaded_at", "reconciled_at"]
+
+
+class StatementOut(StatementSummaryOut):
     lines = StatementLineOut(many=True)
     exceptions = ExceptionOut(many=True)
 
-    class Meta:
-        model = models.Statement
-        fields = [
-            "id",
-            "source",
-            "period_start",
-            "period_end",
-            "uploaded_at",
-            "reconciled_at",
-            "lines",
-            "exceptions",
-        ]
+    class Meta(StatementSummaryOut.Meta):
+        fields = [*StatementSummaryOut.Meta.fields, "lines", "exceptions"]
 
 
 class ResolveIn(serializers.Serializer[Any]):

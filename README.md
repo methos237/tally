@@ -57,7 +57,7 @@ Console (Vue 3, Vite, Tailwind, Pinia, Storybook, Cypress) ──► session-aut
 
 ## Stack
 
-Python 3.13 · Django 6.0 · Django REST Framework 3.18 · Celery 5.6 + Redis 7 · PostgreSQL 17 · Stripe (test mode) · Airflow · RustFS (S3 API) · Hypothesis · pytest · import-linter · Vue 3.5 · Vite 8 · TypeScript 6 · Tailwind CSS 4 · Pinia 4 · Storybook · Cypress · OpenTelemetry · GitHub Actions
+Python 3.13 · Django 6.0 · Django REST Framework 3.18 · Celery 5.6 + Redis 7 · PostgreSQL 17 · Stripe (test mode) · Airflow · RustFS (S3 API) · Hypothesis · pytest · import-linter · Vue 3.5 · Vite 8 · TypeScript 6 · Tailwind CSS 4 · Pinia 4 · Storybook · Cypress · Lighthouse CI · OpenTelemetry · GitHub Actions
 
 Prerequisites: Docker with Compose v2, uv 0.12+, Node 26, Stripe CLI, a Stripe account in test mode (free, no card). Copy `.env.example` to `.env`; the defaults work against compose without a Stripe key.
 
@@ -68,7 +68,7 @@ make test                     # pytest against the compose Postgres
 uv run python manage.py seed_demo       # two tenants, 90 days of entries
 uv run python manage.py replay_balances # rebuild the balance projection
 make lint                     # ruff, mypy, import-linter
-cd console && npm ci && npm run dev   # Vite on 5173, proxies /api and /health to 8001
+cd console && npm ci && npm run dev   # Vite on 5173, proxies /api and /console to 8001
 ```
 
 ## The ledger
@@ -215,7 +215,31 @@ Retries 3, five minutes apart; `dagrun_timeout` of 30 minutes stands in for the 
 
 ## Console
 
-Vue 3 with `<script setup>` and TypeScript, Vite, Pinia, Tailwind CSS, a typed client generated from the API's OpenAPI document. The component library (`TallyTable`, `MoneyCell`, `StatusBadge`, `JournalLines`, `ExceptionCard`, `Pagination`) is documented in Storybook and published to GitHub Pages. Pages: dashboard, journal browser, account balances, subscriptions and invoices, webhook endpoints with dead letters, reconciliation workbench, reports. Cypress drives the main flows against the compose stack with `cypress-axe` checking WCAG 2.2 AA on every page.
+Vue 3 with `<script setup>` and TypeScript, Vite, Pinia, Vue Router, Tailwind CSS and `@tanstack/vue-query`. Operators sign in with a Django session (`POST /console/login`, CSRF-protected) and the session then authenticates them to the whole API as their tenant, so the console calls the same endpoints integrators do. The client is generated from the API's OpenAPI document with `openapi-typescript` and called through `openapi-fetch`; `console/openapi.json` is committed and a test fails when it drifts from the served schema (`make openapi` regenerates both the document and the types).
+
+```bash
+cd console && npm ci && npm run dev    # Vite on 5173, proxies /api and /console to Django on 8001
+uv run python manage.py seed_demo      # also creates the operator: ops / ops-demo
+make console                           # production build; `make dev` then serves it on 8001 via whitenoise
+npm run storybook                      # component library on 6006
+npm run test:e2e                       # Cypress against 8001 (make console, make dev, seed_demo)
+```
+
+The component library is in Storybook with the a11y addon treating violations as errors, published to GitHub Pages at <https://methos237.github.io/tally/>: `TallyTable`, `MoneyCell` (decimal strings formatted per currency, never through a float), `StatusBadge`, `JournalLines` (signed amounts split into debit and credit), `ExceptionCard`, `Pagination` (cursor URLs), `EmptyState`. Each component has a Vitest unit test.
+
+Pages: dashboard (balances by type, open invoices, dead letters, open exceptions), journal browser (filters, cursor pagination, entry drawer with lines), accounts with balance as of a date and latest entries, subscriptions and invoices, webhook endpoints with dead letters and a redeliver button, reconciliation workbench (statement lines beside exceptions, candidate cash entries within the matching window, a resolve dialog that explains or posts an adjusting entry) and the partner report list with downloads streamed through the API so the bucket stays private.
+
+Cypress drives sign in, the journal, resolving an exception and redelivering a dead letter against Django serving the production build with `seed_demo`, and `cypress-axe` checks every page at WCAG 2.2 AA. Console CI brings up Postgres, Redis and RustFS as service containers for it, then runs Lighthouse against the production build served by Django with a 90+ budget on performance and accessibility.
+
+| Dashboard | Reconciliation workbench |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Reconciliation workbench](docs/screenshots/reconciliation.png) |
+
+| Journal with entry drawer | Resolve dialog |
+|---|---|
+| ![Journal](docs/screenshots/journal.png) | ![Resolve dialog](docs/screenshots/resolve-dialog.png) |
+
+More in [`docs/screenshots/`](docs/screenshots/).
 
 ## Design decisions
 
@@ -254,7 +278,7 @@ Each phase is a branch merged by pull request and tracked as a GitHub issue.
 - [x] 2 Posting API: idempotency, locking, rate limiting
 - [x] 3 Subscriptions, Stripe, webhooks in and out
 - [x] 4 Reconciliation and the nightly partner report
-- [ ] 5 Vue 3 operations console
+- [x] 5 Vue 3 operations console
 - [ ] 6 Observability, demo script, README polish
 - [ ] 7 Stretch: Kotlin posting service, Temporal dunning workflow, multi-currency, Postgres row-level security
 

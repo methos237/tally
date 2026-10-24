@@ -16,7 +16,7 @@ export default defineConfigWithVueTs(
     files: ['**/*.{vue,ts,mts,tsx}'],
   },
 
-  globalIgnores(['**/dist/**', '**/dist-ssr/**', '**/coverage/**']),
+  globalIgnores(['**/dist/**', '**/dist-ssr/**', '**/coverage/**', '**/storybook-static/**', 'src/api/schema.d.ts']),
 
   ...pluginVue.configs['flat/essential'],
   vueTsConfigs.recommended,
@@ -24,6 +24,12 @@ export default defineConfigWithVueTs(
   {
     ...pluginVitest.configs.recommended,
     files: ['src/**/__tests__/*'],
+  },
+
+  {
+    name: 'app/cypress',
+    files: ['cypress/**/*.ts'],
+    rules: { '@typescript-eslint/no-namespace': 'off' }, // Cypress command typings need it
   },
 
   ...pluginOxlint.buildFromOxlintConfigFile('.oxlintrc.json'),

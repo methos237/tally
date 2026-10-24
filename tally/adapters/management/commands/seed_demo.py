@@ -12,11 +12,22 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from tally.adapters import billing, reconciliation
-from tally.adapters.models import Account, Customer, JournalLine, Plan, Subscription, Tenant
+from tally.adapters import billing, outbox, reconciliation
+from tally.adapters.models import (
+    Account,
+    Customer,
+    JournalLine,
+    Operator,
+    OutboxMessage,
+    Plan,
+    Subscription,
+    Tenant,
+    WebhookEndpoint,
+)
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import PostEntry
 from tally.domain.journal import JournalEntry, Line
@@ -34,6 +45,7 @@ PLANS = [
 ]
 CUSTOMERS = 10
 SUBSCRIPTIONS = {"Acme Corp": 13, "Globex": 12}
+OPERATOR = ("ops", "ops-demo")  # console sign-in for the first tenant; demo data only
 
 CHART = [
     ("1000", "Cash", "asset"),
@@ -109,9 +121,32 @@ class Command(BaseCommand):
                     )
                 invoices, paid = self.seed_billing(tenant, SUBSCRIPTIONS[name], rng)
                 exceptions = self.seed_statement(tenant)
+                if name == TENANTS[0]:
+                    username, password = OPERATOR
+                    user = get_user_model().objects.create_user(username, password=password)
+                    Operator.objects.create(user=user, tenant=tenant)
+                    self.seed_dead_letters(tenant)
             self.stdout.write(
                 f"{name}: {len(CHART)} accounts, {ENTRIES + 1} entries, "
                 f"{invoices} invoices ({paid} paid), 1 statement ({exceptions} exceptions)"
+            )
+
+    def seed_dead_letters(self, tenant: Tenant) -> None:
+        """An endpoint nobody listens on, with two deliveries that exhausted their retries,
+        so the console has something to redeliver."""
+        endpoint = WebhookEndpoint.objects.create(
+            tenant=tenant, url="http://localhost:9/hooks/tally", secret=WebhookEndpoint.new_secret()
+        )
+        for n in range(2):
+            outbox.publish(
+                tenant.id,
+                "invoice.paid",
+                {"invoice_id": 1000 + n, "amount": "49.000000", "currency": "USD"},
+            )
+            OutboxMessage.objects.filter(endpoint=endpoint, dead_at__isnull=True).update(
+                attempts=OutboxMessage.MAX_ATTEMPTS,
+                dead_at=DEMO_DATE - timedelta(days=2 - n),
+                last_error="connection refused",
             )
 
     def seed_billing(self, tenant: Tenant, count: int, rng: random.Random) -> tuple[int, int]:

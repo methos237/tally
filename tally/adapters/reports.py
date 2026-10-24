@@ -49,8 +49,16 @@ def build(tenant: models.Tenant, day: date) -> str:
     return out.getvalue()
 
 
+def prefix_for(tenant: models.Tenant) -> str:
+    return f"{tenant.id}/"
+
+
 def key_for(tenant: models.Tenant, day: date) -> str:
-    return f"{tenant.id}/{day.isoformat()}.csv"
+    return f"{prefix_for(tenant)}{day.isoformat()}.csv"
+
+
+def day_of(key: str) -> date:
+    return date.fromisoformat(key.rpartition("/")[2].removesuffix(".csv"))
 
 
 @cache

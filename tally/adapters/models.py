@@ -6,6 +6,7 @@ the triggers that enforce it and the deferred balancing check.
 
 from secrets import token_urlsafe
 
+from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
@@ -144,6 +145,25 @@ class ApiKey(models.Model):
         )
         # ponytail: one Argon2 verify (~26 ms) per request; cache verified keys in Redis if needed
         return row if row and check_password(plaintext, row.key_hash) else None
+
+
+class Operator(models.Model):
+    """A console user: one Django user signed in with a session, acting for one tenant.
+    The single `ops` role of the roadmap; the API principal stays the Tenant."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="operator"
+    )
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="operators")
+
+    class Meta:
+        db_table = "operators"
+
+    @classmethod
+    def for_user(cls, user: object) -> "Operator | None":
+        return (
+            cls.objects.select_related("tenant").filter(user_id=getattr(user, "pk", None)).first()
+        )
 
 
 class IdempotencyRecord(models.Model):
