@@ -1,4 +1,4 @@
-.PHONY: up down dev migrate test test-live lint openapi
+.PHONY: up down dev migrate test test-live lint openapi console
 
 up:
 	docker compose up -d --wait
@@ -27,3 +27,6 @@ lint:
 openapi:  # export the schema the console's typed client is generated from
 	uv run python manage.py spectacular --format openapi-json --validate --file console/openapi.json
 	cd console && npm run gen:api
+
+console:  # production build; `make dev` then serves it at http://localhost:8001
+	cd console && npm run build

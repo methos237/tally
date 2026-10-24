@@ -22,6 +22,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -95,6 +96,13 @@ SPECTACULAR_SETTINGS = {
 
 TIME_ZONE = "UTC"
 USE_TZ = True
+
+# The built console (`npm run build` in console/) is served from the URL root by whitenoise;
+# tally.urls falls back to its index.html for the SPA's deep links.
+CONSOLE_DIST = Path(os.environ.get("CONSOLE_DIST", BASE_DIR / "console" / "dist"))
+WHITENOISE_ROOT = CONSOLE_DIST
+WHITENOISE_INDEX_FILE = True
+WHITENOISE_IMMUTABLE_FILE_TEST = lambda path, url: "/assets/" in url  # Vite hashes every asset  # noqa: E731
 
 STRIPE_API_BASE = os.environ.get("STRIPE_API_BASE", "")  # set to stripe-mock in compose and CI
 # stripe-mock accepts any well-formed test key; against Stripe itself the env var is required.

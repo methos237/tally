@@ -65,5 +65,13 @@ jobs:
           curl -sf --retry 30 --retry-connrefused --retry-delay 1 -o /dev/null http://localhost:5173/
       - run: npx cypress install
       - run: npm run test:e2e
+      # Lighthouse against the production build served by Django + whitenoise, signed in.
+      - run: |
+          curl -sf -c jar -o /dev/null http://localhost:8001/console/session || true
+          TOKEN=$(awk '/csrftoken/ {print $7}' jar)
+          curl -sf -b jar -c jar -H "X-CSRFToken: $TOKEN" -H "Content-Type: application/json" \
+            -d '{"username":"ops","password":"ops-demo"}' http://localhost:8001/console/login
+          echo "LHCI_EXTRA_HEADERS={\"Cookie\":\"sessionid=$(awk '/sessionid/ {print $7}' jar)\"}" >> "$GITHUB_ENV"
+      - run: npx -y @lhci/cli@0.15.1 autorun
       - if: failure()
         run: tail -50 /tmp/django.log /tmp/vite.log
