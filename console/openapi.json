@@ -312,6 +312,65 @@
                 }
             }
         },
+        "/api/invoices": {
+            "get": {
+                "operationId": "api_invoices_list",
+                "parameters": [
+                    {
+                        "name": "cursor",
+                        "required": false,
+                        "in": "query",
+                        "description": "The pagination cursor value.",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "page_size",
+                        "required": false,
+                        "in": "query",
+                        "description": "Number of results to return per page.",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "open",
+                                "paid"
+                            ]
+                        }
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PaginatedInvoiceOutList"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
         "/api/me": {
             "get": {
                 "operationId": "api_me_retrieve",
@@ -449,7 +508,99 @@
                 }
             }
         },
+        "/api/reports": {
+            "get": {
+                "operationId": "api_reports_list",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ReportOut"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/reports/{day}": {
+            "get": {
+                "operationId": "api_reports_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "day",
+                        "schema": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "text/csv"
+                    }
+                }
+            }
+        },
         "/api/statements": {
+            "get": {
+                "operationId": "api_statements_list",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/StatementSummaryOut"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
             "post": {
                 "operationId": "api_statements_create",
                 "parameters": [
@@ -574,6 +725,61 @@
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/StatementOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/subscriptions": {
+            "get": {
+                "operationId": "api_subscriptions_list",
+                "parameters": [
+                    {
+                        "name": "cursor",
+                        "required": false,
+                        "in": "query",
+                        "description": "The pagination cursor value.",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "page_size",
+                        "required": false,
+                        "in": "query",
+                        "description": "Number of results to return per page.",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PaginatedSubscriptionOutList"
                                 }
                             }
                         },
@@ -871,9 +1077,14 @@
                     },
                     "currency": {
                         "$ref": "#/components/schemas/CurrencyEnum"
+                    },
+                    "balance": {
+                        "type": "string",
+                        "readOnly": true
                     }
                 },
                 "required": [
+                    "balance",
                     "code",
                     "currency",
                     "id",
@@ -1119,6 +1330,72 @@
                     "statement"
                 ]
             },
+            "InvoiceOut": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "subscription": {
+                        "type": "integer"
+                    },
+                    "customer": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string",
+                        "maxLength": 200
+                    },
+                    "period_start": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "period_end": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "amount": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,12}(?:\\.\\d{0,6})?$"
+                    },
+                    "currency": {
+                        "$ref": "#/components/schemas/CurrencyEnum"
+                    },
+                    "status": {
+                        "$ref": "#/components/schemas/InvoiceOutStatusEnum"
+                    },
+                    "issued_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "paid_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "amount",
+                    "currency",
+                    "customer",
+                    "description",
+                    "id",
+                    "issued_at",
+                    "period_end",
+                    "period_start",
+                    "subscription"
+                ]
+            },
+            "InvoiceOutStatusEnum": {
+                "enum": [
+                    "open",
+                    "paid"
+                ],
+                "type": "string",
+                "description": "* `open` - open\n* `paid` - paid"
+            },
             "LineIn": {
                 "type": "object",
                 "properties": {
@@ -1247,6 +1524,58 @@
                     }
                 }
             },
+            "PaginatedInvoiceOutList": {
+                "type": "object",
+                "required": [
+                    "results"
+                ],
+                "properties": {
+                    "next": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?cursor=cD00ODY%3D\""
+                    },
+                    "previous": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?cursor=cj0xJnA9NDg3"
+                    },
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/InvoiceOut"
+                        }
+                    }
+                }
+            },
+            "PaginatedSubscriptionOutList": {
+                "type": "object",
+                "required": [
+                    "results"
+                ],
+                "properties": {
+                    "next": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?cursor=cD00ODY%3D\""
+                    },
+                    "previous": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?cursor=cj0xJnA9NDg3"
+                    },
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/SubscriptionOut"
+                        }
+                    }
+                }
+            },
             "ProblemOut": {
                 "type": "object",
                 "description": "RFC 9457 body every error carries; see tally.api.problems.",
@@ -1270,6 +1599,31 @@
                     "status",
                     "title",
                     "type"
+                ]
+            },
+            "ReportOut": {
+                "type": "object",
+                "properties": {
+                    "day": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "key": {
+                        "type": "string"
+                    },
+                    "size": {
+                        "type": "integer"
+                    },
+                    "last_modified": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "required": [
+                    "day",
+                    "key",
+                    "last_modified",
+                    "size"
                 ]
             },
             "ResolutionEnum": {
@@ -1449,6 +1803,103 @@
                     "uploaded_at"
                 ]
             },
+            "StatementSummaryOut": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "source": {
+                        "$ref": "#/components/schemas/SourceEnum"
+                    },
+                    "period_start": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "period_end": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "uploaded_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "reconciled_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "id",
+                    "period_end",
+                    "period_start",
+                    "source",
+                    "uploaded_at"
+                ]
+            },
+            "SubscriptionOut": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "customer": {
+                        "type": "string"
+                    },
+                    "plan": {
+                        "type": "string"
+                    },
+                    "plan_name": {
+                        "type": "string"
+                    },
+                    "amount": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,12}(?:\\.\\d{0,6})?$"
+                    },
+                    "currency": {
+                        "type": "string"
+                    },
+                    "interval": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "$ref": "#/components/schemas/SubscriptionOutStatusEnum"
+                    },
+                    "started_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "billed_through": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "amount",
+                    "currency",
+                    "customer",
+                    "id",
+                    "interval",
+                    "plan",
+                    "plan_name",
+                    "started_at"
+                ]
+            },
+            "SubscriptionOutStatusEnum": {
+                "enum": [
+                    "active",
+                    "past_due",
+                    "canceled"
+                ],
+                "type": "string",
+                "description": "* `active` - active\n* `past_due` - past_due\n* `canceled` - canceled"
+            },
             "TypeEnum": {
                 "enum": [
                     "asset",
@@ -1483,6 +1934,10 @@
                         "format": "date-time",
                         "nullable": true
                     },
+                    "dead_letters": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
                     "secret": {
                         "type": "string",
                         "maxLength": 64
@@ -1490,6 +1945,7 @@
                 },
                 "required": [
                     "created_at",
+                    "dead_letters",
                     "id",
                     "secret",
                     "url"
@@ -1529,10 +1985,15 @@
                         "type": "string",
                         "format": "date-time",
                         "nullable": true
+                    },
+                    "dead_letters": {
+                        "type": "integer",
+                        "readOnly": true
                     }
                 },
                 "required": [
                     "created_at",
+                    "dead_letters",
                     "id",
                     "url"
                 ]

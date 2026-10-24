@@ -38,6 +38,13 @@ def detail(tenant_id: int, statement_id: int, code: int = 200) -> Response:
 class StatementList(APIView):
     parser_classes = [CsvParser]
 
+    @extend_schema(responses=serializers.StatementSummaryOut(many=True))
+    def get(self, request: Request) -> Response:
+        rows = models.Statement.objects.filter(tenant_id=tenant_of(request).id).order_by(
+            "-uploaded_at", "-id"
+        )
+        return Response(serializers.StatementSummaryOut(rows, many=True).data)
+
     @extend_schema(
         request={"text/csv": {"type": "string"}}, responses={201: serializers.StatementOut}
     )

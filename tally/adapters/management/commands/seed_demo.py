@@ -22,9 +22,11 @@ from tally.adapters.models import (
     Customer,
     JournalLine,
     Operator,
+    OutboxMessage,
     Plan,
     Subscription,
     Tenant,
+    WebhookEndpoint,
 )
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import PostEntry
@@ -122,9 +124,29 @@ class Command(BaseCommand):
                 if name == TENANTS[0]:
                     user = get_user_model().objects.create_user(*OPERATOR)
                     Operator.objects.create(user=user, tenant=tenant)
+                    self.seed_dead_letters(tenant)
             self.stdout.write(
                 f"{name}: {len(CHART)} accounts, {ENTRIES + 1} entries, "
                 f"{invoices} invoices ({paid} paid), 1 statement ({exceptions} exceptions)"
+            )
+
+    def seed_dead_letters(self, tenant: Tenant) -> None:
+        """An endpoint nobody listens on, with two deliveries that exhausted their retries,
+        so the console has something to redeliver."""
+        endpoint = WebhookEndpoint.objects.create(
+            tenant=tenant, url="http://localhost:9/hooks/tally", secret=WebhookEndpoint.new_secret()
+        )
+        for n in range(2):
+            at = DEMO_DATE - timedelta(days=2 - n)
+            OutboxMessage.objects.create(
+                tenant=tenant,
+                endpoint=endpoint,
+                event_type="invoice.paid",
+                payload={"invoice_id": 1000 + n, "amount": "49.000000", "currency": "USD"},
+                attempts=5,
+                next_attempt_at=at,
+                dead_at=at,
+                last_error="connection refused",
             )
 
     def seed_billing(self, tenant: Tenant, count: int, rng: random.Random) -> tuple[int, int]:

@@ -3,7 +3,7 @@ from datetime import date
 from django.urls import path, register_converter
 from drf_spectacular.views import SpectacularJSONAPIView, SpectacularRedocView
 
-from tally.api import console, internal, reconciliation, views, webhooks
+from tally.api import console, internal, reconciliation, report_views, views, webhooks
 
 
 class DateConverter:
@@ -31,6 +31,10 @@ urlpatterns = [
     path("api/entries/<int:entry_id>/reverse", views.EntryReverse.as_view(), name="entry-reverse"),
     path("api/accounts", views.AccountList.as_view(), name="accounts"),
     path("api/accounts/<str:code>/balance", views.AccountBalanceView.as_view(), name="balance"),
+    path("api/subscriptions", views.SubscriptionList.as_view(), name="subscriptions"),
+    path("api/invoices", views.InvoiceList.as_view(), name="invoices"),
+    path("api/reports", report_views.ReportList.as_view(), name="reports"),
+    path("api/reports/<date:day>", report_views.ReportDownload.as_view(), name="report-download"),
     path("api/webhook-endpoints", views.WebhookEndpointList.as_view(), name="webhook-endpoints"),
     path(
         "api/webhook-endpoints/<int:endpoint_id>/dead-letters",

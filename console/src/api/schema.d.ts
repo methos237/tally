@@ -84,6 +84,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/invoices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["api_invoices_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me": {
         parameters: {
             query?: never;
@@ -133,6 +149,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["api_reports_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/{day}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["api_reports_retrieve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/statements": {
         parameters: {
             query?: never;
@@ -140,7 +188,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["api_statements_list"];
         put?: never;
         post: operations["api_statements_create"];
         delete?: never;
@@ -175,6 +223,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["api_statements_reconcile_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["api_subscriptions_list"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -288,6 +352,7 @@ export interface components {
             name: string;
             type: components["schemas"]["TypeEnum"];
             currency: components["schemas"]["CurrencyEnum"];
+            readonly balance: string;
         };
         /**
          * @description * `adjust` - adjust
@@ -362,6 +427,30 @@ export interface components {
             readonly adjusting_entry: number;
             explanation?: string;
         };
+        InvoiceOut: {
+            readonly id: number;
+            subscription: number;
+            customer: string;
+            description: string;
+            /** Format: date-time */
+            period_start: string;
+            /** Format: date-time */
+            period_end: string;
+            /** Format: decimal */
+            amount: string;
+            currency: components["schemas"]["CurrencyEnum"];
+            status?: components["schemas"]["InvoiceOutStatusEnum"];
+            /** Format: date-time */
+            issued_at: string;
+            /** Format: date-time */
+            paid_at?: string | null;
+        };
+        /**
+         * @description * `open` - open
+         *     * `paid` - paid
+         * @enum {string}
+         */
+        InvoiceOutStatusEnum: "open" | "paid";
         LineIn: {
             /** @description account code, e.g. 1200 */
             account: string;
@@ -409,6 +498,32 @@ export interface components {
             previous?: string | null;
             results: components["schemas"]["EntryOut"][];
         };
+        PaginatedInvoiceOutList: {
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?cursor=cD00ODY%3D"
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?cursor=cj0xJnA9NDg3
+             */
+            previous?: string | null;
+            results: components["schemas"]["InvoiceOut"][];
+        };
+        PaginatedSubscriptionOutList: {
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?cursor=cD00ODY%3D"
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?cursor=cj0xJnA9NDg3
+             */
+            previous?: string | null;
+            results: components["schemas"]["SubscriptionOut"][];
+        };
         /** @description RFC 9457 body every error carries; see tally.api.problems. */
         ProblemOut: {
             /** Format: uri */
@@ -416,6 +531,14 @@ export interface components {
             title: string;
             status: number;
             detail: string;
+        };
+        ReportOut: {
+            /** Format: date */
+            day: string;
+            key: string;
+            size: number;
+            /** Format: date-time */
+            last_modified: string;
         };
         /**
          * @description * `adjusted` - adjusted
@@ -475,6 +598,40 @@ export interface components {
             lines: components["schemas"]["StatementLineOut"][];
             exceptions: components["schemas"]["ExceptionOut"][];
         };
+        StatementSummaryOut: {
+            readonly id: number;
+            source: components["schemas"]["SourceEnum"];
+            /** Format: date */
+            period_start: string;
+            /** Format: date */
+            period_end: string;
+            /** Format: date-time */
+            readonly uploaded_at: string;
+            /** Format: date-time */
+            reconciled_at?: string | null;
+        };
+        SubscriptionOut: {
+            readonly id: number;
+            customer: string;
+            plan: string;
+            plan_name: string;
+            /** Format: decimal */
+            amount: string;
+            currency: string;
+            interval: string;
+            status?: components["schemas"]["SubscriptionOutStatusEnum"];
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            billed_through?: string | null;
+        };
+        /**
+         * @description * `active` - active
+         *     * `past_due` - past_due
+         *     * `canceled` - canceled
+         * @enum {string}
+         */
+        SubscriptionOutStatusEnum: "active" | "past_due" | "canceled";
         /**
          * @description * `asset` - asset
          *     * `liability` - liability
@@ -493,6 +650,7 @@ export interface components {
             readonly created_at: string;
             /** Format: date-time */
             disabled_at?: string | null;
+            readonly dead_letters: number;
             secret: string;
         };
         WebhookEndpointIn: {
@@ -507,6 +665,7 @@ export interface components {
             readonly created_at: string;
             /** Format: date-time */
             disabled_at?: string | null;
+            readonly dead_letters: number;
         };
     };
     responses: never;
@@ -668,6 +827,31 @@ export interface operations {
             };
         };
     };
+    api_invoices_list: {
+        parameters: {
+            query?: {
+                /** @description The pagination cursor value. */
+                cursor?: string;
+                /** @description Number of results to return per page. */
+                page_size?: number;
+                status?: "open" | "paid";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedInvoiceOutList"];
+                };
+            };
+        };
+    };
     api_me_retrieve: {
         parameters: {
             query?: never;
@@ -733,6 +917,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExceptionOut"];
+                };
+            };
+        };
+    };
+    api_reports_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportOut"][];
+                };
+            };
+        };
+    };
+    api_reports_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                day: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/csv */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    api_statements_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatementSummaryOut"][];
                 };
             };
         };
@@ -804,6 +1046,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatementOut"];
+                };
+            };
+        };
+    };
+    api_subscriptions_list: {
+        parameters: {
+            query?: {
+                /** @description The pagination cursor value. */
+                cursor?: string;
+                /** @description Number of results to return per page. */
+                page_size?: number;
+                status?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedSubscriptionOutList"];
                 };
             };
         };

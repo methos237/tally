@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from django.db import connection
-from django.db.models import QuerySet, Sum
+from django.db.models import Count, Q, QuerySet, Sum
 from django.http import HttpRequest, JsonResponse
 from django.utils.dateparse import parse_datetime
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
@@ -168,7 +168,9 @@ class AccountList(generics.ListAPIView[models.Account]):
     pagination_class = AccountCursor
 
     def get_queryset(self) -> QuerySet[models.Account]:
-        return models.Account.objects.filter(tenant_id=tenant_of(self.request).id)
+        return models.Account.objects.filter(tenant_id=tenant_of(self.request).id).select_related(
+            "balance"
+        )
 
 
 class AccountBalanceView(APIView):
@@ -207,8 +209,10 @@ class WebhookEndpointList(generics.ListAPIView[models.WebhookEndpoint]):
     pagination_class = None
 
     def get_queryset(self) -> QuerySet[models.WebhookEndpoint]:
-        return models.WebhookEndpoint.objects.filter(tenant_id=tenant_of(self.request).id).order_by(
-            "id"
+        return (
+            models.WebhookEndpoint.objects.filter(tenant_id=tenant_of(self.request).id)
+            .annotate(dead_letters=Count("outbox", filter=Q(outbox__dead_at__isnull=False)))
+            .order_by("id")
         )
 
     @extend_schema(
@@ -254,3 +258,37 @@ class DeadLetterRedeliver(APIView):
             raise Problem(404, f"dead letter {message_id} not found on endpoint {endpoint_id}")
         outbox.redeliver(message)
         return Response(serializers.DeadLetterOut(message).data, status=status.HTTP_202_ACCEPTED)
+
+
+class SubscriptionCursor(Cursor):
+    ordering = ("-started_at", "-id")
+
+
+@extend_schema_view(get=extend_schema(parameters=[OpenApiParameter("status", str)]))
+class SubscriptionList(generics.ListAPIView[models.Subscription]):
+    serializer_class = serializers.SubscriptionOut
+    pagination_class = SubscriptionCursor
+
+    def get_queryset(self) -> QuerySet[models.Subscription]:
+        qs = models.Subscription.objects.filter(tenant_id=tenant_of(self.request).id)
+        if status_ := self.request.query_params.get("status"):
+            qs = qs.filter(status=status_)
+        return qs.select_related("customer", "plan")
+
+
+class InvoiceCursor(Cursor):
+    ordering = ("-issued_at", "-id")
+
+
+@extend_schema_view(
+    get=extend_schema(parameters=[OpenApiParameter("status", str, enum=["open", "paid"])])
+)
+class InvoiceList(generics.ListAPIView[models.Invoice]):
+    serializer_class = serializers.InvoiceOut
+    pagination_class = InvoiceCursor
+
+    def get_queryset(self) -> QuerySet[models.Invoice]:
+        qs = models.Invoice.objects.filter(tenant_id=tenant_of(self.request).id)
+        if status_ := self.request.query_params.get("status"):
+            qs = qs.filter(status=status_)
+        return qs.select_related("subscription__customer")
