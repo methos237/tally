@@ -34,6 +34,7 @@ def health(_request: HttpRequest) -> JsonResponse:
     return JsonResponse({"status": "ok"})
 
 
+@extend_schema(responses={200: serializers.MeOut})
 @api_view(["GET"])
 def me(request: Request) -> Response:
     """Who am I: lets an integrator confirm a key before posting anything."""

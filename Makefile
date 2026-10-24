@@ -1,4 +1,4 @@
-.PHONY: up down dev migrate test test-live lint
+.PHONY: up down dev migrate test test-live lint openapi
 
 up:
 	docker compose up -d --wait
@@ -23,3 +23,7 @@ test-live:  # Stripe test mode; needs STRIPE_TEST_SECRET_KEY in .env
 
 lint:
 	uv run ruff format --check . && uv run ruff check . && uv run mypy tally && uv run lint-imports
+
+openapi:  # export the schema the console's typed client is generated from
+	uv run python manage.py spectacular --format openapi-json --validate --file console/openapi.json
+	cd console && npm run gen:api

@@ -23,6 +23,20 @@ class AmountField(serializers.DecimalField):
         return super().to_internal_value(data)
 
 
+class ProblemOut(serializers.Serializer[Any]):
+    """RFC 9457 body every error carries; see tally.api.problems."""
+
+    type = serializers.URLField()
+    title = serializers.CharField()
+    status = serializers.IntegerField()
+    detail = serializers.CharField()
+
+
+class MeOut(serializers.Serializer[Any]):
+    tenant_id = serializers.IntegerField()
+    tenant = serializers.CharField()
+
+
 class LineIn(serializers.Serializer[Any]):
     account = serializers.CharField(max_length=32, help_text="account code, e.g. 1200")
     amount = AmountField()

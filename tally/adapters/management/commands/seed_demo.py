@@ -12,11 +12,20 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from tally.adapters import billing, reconciliation
-from tally.adapters.models import Account, Customer, JournalLine, Plan, Subscription, Tenant
+from tally.adapters.models import (
+    Account,
+    Customer,
+    JournalLine,
+    Operator,
+    Plan,
+    Subscription,
+    Tenant,
+)
 from tally.adapters.repositories import DjangoJournalRepository
 from tally.application.journal import PostEntry
 from tally.domain.journal import JournalEntry, Line
@@ -34,6 +43,7 @@ PLANS = [
 ]
 CUSTOMERS = 10
 SUBSCRIPTIONS = {"Acme Corp": 13, "Globex": 12}
+OPERATOR = ("ops", "ops-demo")  # console sign-in for the first tenant; demo data only
 
 CHART = [
     ("1000", "Cash", "asset"),
@@ -109,6 +119,9 @@ class Command(BaseCommand):
                     )
                 invoices, paid = self.seed_billing(tenant, SUBSCRIPTIONS[name], rng)
                 exceptions = self.seed_statement(tenant)
+                if name == TENANTS[0]:
+                    user = get_user_model().objects.create_user(*OPERATOR)
+                    Operator.objects.create(user=user, tenant=tenant)
             self.stdout.write(
                 f"{name}: {len(CHART)} accounts, {ENTRIES + 1} entries, "
                 f"{invoices} invoices ({paid} paid), 1 statement ({exceptions} exceptions)"

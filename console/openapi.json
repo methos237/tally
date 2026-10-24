@@ -1,0 +1,1554 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "title": "Tally API",
+        "version": "0.1.0",
+        "description": "Double-entry ledger and billing. Writes need X-Api-Key and Idempotency-Key."
+    },
+    "paths": {
+        "/api/accounts": {
+            "get": {
+                "operationId": "api_accounts_list",
+                "parameters": [
+                    {
+                        "name": "cursor",
+                        "required": false,
+                        "in": "query",
+                        "description": "The pagination cursor value.",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "page_size",
+                        "required": false,
+                        "in": "query",
+                        "description": "Number of results to return per page.",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PaginatedAccountOutList"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/accounts/{code}/balance": {
+            "get": {
+                "operationId": "api_accounts_balance_retrieve",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "as_of",
+                        "schema": {
+                            "type": "string",
+                            "format": "date-time"
+                        },
+                        "description": "ISO 8601; default: now"
+                    },
+                    {
+                        "in": "path",
+                        "name": "code",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/BalanceOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/entries": {
+            "get": {
+                "operationId": "api_entries_list",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "account",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "account code"
+                    },
+                    {
+                        "name": "cursor",
+                        "required": false,
+                        "in": "query",
+                        "description": "The pagination cursor value.",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "page_size",
+                        "required": false,
+                        "in": "query",
+                        "description": "Number of results to return per page.",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "source_id",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "source_type",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PaginatedEntryOutList"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "post": {
+                "operationId": "api_entries_create",
+                "parameters": [
+                    {
+                        "in": "header",
+                        "name": "Idempotency-Key",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Unique per logical request; replays return the stored response.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EntryIn"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EntryOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/entries/{entry_id}": {
+            "get": {
+                "operationId": "api_entries_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "entry_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EntryOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/entries/{entry_id}/reverse": {
+            "post": {
+                "operationId": "api_entries_reverse_create",
+                "parameters": [
+                    {
+                        "in": "header",
+                        "name": "Idempotency-Key",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Unique per logical request; replays return the stored response.",
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "entry_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ReverseIn"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EntryOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/me": {
+            "get": {
+                "operationId": "api_me_retrieve",
+                "description": "Who am I: lets an integrator confirm a key before posting anything.",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/MeOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/reconciliation-exceptions": {
+            "get": {
+                "operationId": "api_reconciliation_exceptions_list",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "statement",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "open",
+                                "resolved"
+                            ]
+                        }
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ExceptionOut"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/reconciliation-exceptions/{exception_id}/resolve": {
+            "post": {
+                "operationId": "api_reconciliation_exceptions_resolve_create",
+                "parameters": [
+                    {
+                        "in": "header",
+                        "name": "Idempotency-Key",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Unique per logical request; replays return the stored response.",
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "exception_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ResolveIn"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ExceptionOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/statements": {
+            "post": {
+                "operationId": "api_statements_create",
+                "parameters": [
+                    {
+                        "in": "header",
+                        "name": "Idempotency-Key",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Unique per logical request; replays return the stored response.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "text/csv": {
+                            "schema": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/StatementOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/statements/{statement_id}": {
+            "get": {
+                "operationId": "api_statements_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "statement_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/StatementOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/statements/{statement_id}/reconcile": {
+            "post": {
+                "operationId": "api_statements_reconcile_create",
+                "parameters": [
+                    {
+                        "in": "header",
+                        "name": "Idempotency-Key",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Unique per logical request; replays return the stored response.",
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "statement_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/StatementOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/webhook-endpoints": {
+            "get": {
+                "operationId": "api_webhook_endpoints_list",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/WebhookEndpointOut"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "post": {
+                "operationId": "api_webhook_endpoints_create",
+                "parameters": [
+                    {
+                        "in": "header",
+                        "name": "Idempotency-Key",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Unique per logical request; replays return the stored response.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/WebhookEndpointIn"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WebhookEndpointCreated"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/webhook-endpoints/{endpoint_id}/dead-letters": {
+            "get": {
+                "operationId": "api_webhook_endpoints_dead_letters_list",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "endpoint_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/DeadLetterOut"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/webhook-endpoints/{endpoint_id}/dead-letters/{message_id}/redeliver": {
+            "post": {
+                "operationId": "api_webhook_endpoints_dead_letters_redeliver_create",
+                "parameters": [
+                    {
+                        "in": "header",
+                        "name": "Idempotency-Key",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Unique per logical request; replays return the stored response.",
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "endpoint_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "message_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DeadLetterOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/console/login": {
+            "post": {
+                "operationId": "console_login_create",
+                "tags": [
+                    "console"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/LoginIn"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProblemOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/console/logout": {
+            "post": {
+                "operationId": "console_logout_create",
+                "tags": [
+                    "console"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/console/session": {
+            "get": {
+                "operationId": "console_session_retrieve",
+                "description": "Also sets the CSRF cookie.",
+                "tags": [
+                    "console"
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProblemOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "AccountOut": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "code": {
+                        "type": "string",
+                        "maxLength": 32
+                    },
+                    "name": {
+                        "type": "string",
+                        "maxLength": 200
+                    },
+                    "type": {
+                        "$ref": "#/components/schemas/TypeEnum"
+                    },
+                    "currency": {
+                        "$ref": "#/components/schemas/CurrencyEnum"
+                    }
+                },
+                "required": [
+                    "code",
+                    "currency",
+                    "id",
+                    "name",
+                    "type"
+                ]
+            },
+            "ActionEnum": {
+                "enum": [
+                    "adjust",
+                    "explain"
+                ],
+                "type": "string",
+                "description": "* `adjust` - adjust\n* `explain` - explain"
+            },
+            "BalanceOut": {
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string"
+                    },
+                    "currency": {
+                        "type": "string"
+                    },
+                    "balance": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,12}(?:\\.\\d{0,6})?$"
+                    },
+                    "as_of": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "account",
+                    "as_of",
+                    "balance",
+                    "currency"
+                ]
+            },
+            "BlankEnum": {
+                "enum": [
+                    ""
+                ]
+            },
+            "CurrencyEnum": {
+                "enum": [
+                    "USD",
+                    "EUR",
+                    "GBP",
+                    "JPY"
+                ],
+                "type": "string",
+                "description": "* `USD` - USD\n* `EUR` - EUR\n* `GBP` - GBP\n* `JPY` - JPY"
+            },
+            "DeadLetterOut": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "event_type": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "payload": {},
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "attempts": {
+                        "type": "integer",
+                        "maximum": 32767,
+                        "minimum": 0
+                    },
+                    "last_status": {
+                        "type": "integer",
+                        "maximum": 32767,
+                        "minimum": 0,
+                        "nullable": true
+                    },
+                    "last_error": {
+                        "type": "string"
+                    },
+                    "dead_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "created_at",
+                    "event_type",
+                    "id",
+                    "payload"
+                ]
+            },
+            "EntryIn": {
+                "type": "object",
+                "properties": {
+                    "occurred_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "source": {
+                        "$ref": "#/components/schemas/SourceIn"
+                    },
+                    "lines": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/LineIn"
+                        }
+                    }
+                },
+                "required": [
+                    "lines",
+                    "occurred_at",
+                    "source"
+                ]
+            },
+            "EntryOut": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "occurred_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "posted_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "source": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "readOnly": true
+                    },
+                    "lines": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/LineOut"
+                        }
+                    },
+                    "reverses": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "reversed_by": {
+                        "type": "integer",
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "id",
+                    "lines",
+                    "occurred_at",
+                    "posted_at",
+                    "reversed_by",
+                    "reverses",
+                    "source"
+                ]
+            },
+            "ExceptionOut": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "statement": {
+                        "type": "integer"
+                    },
+                    "line_no": {
+                        "type": "integer"
+                    },
+                    "reference": {
+                        "type": "string"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "maxLength": 16
+                    },
+                    "difference": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,12}(?:\\.\\d{0,6})?$"
+                    },
+                    "currency": {
+                        "$ref": "#/components/schemas/CurrencyEnum"
+                    },
+                    "entry": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "resolved_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "resolution": {
+                        "oneOf": [
+                            {
+                                "$ref": "#/components/schemas/ResolutionEnum"
+                            },
+                            {
+                                "$ref": "#/components/schemas/BlankEnum"
+                            }
+                        ]
+                    },
+                    "adjusting_entry": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "explanation": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "adjusting_entry",
+                    "created_at",
+                    "currency",
+                    "difference",
+                    "entry",
+                    "id",
+                    "line_no",
+                    "reason",
+                    "reference",
+                    "statement"
+                ]
+            },
+            "LineIn": {
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string",
+                        "description": "account code, e.g. 1200",
+                        "maxLength": 32
+                    },
+                    "amount": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,12}(?:\\.\\d{0,6})?$"
+                    },
+                    "currency": {
+                        "$ref": "#/components/schemas/CurrencyEnum"
+                    }
+                },
+                "required": [
+                    "account",
+                    "amount",
+                    "currency"
+                ]
+            },
+            "LineOut": {
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string"
+                    },
+                    "amount": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,12}(?:\\.\\d{0,6})?$"
+                    },
+                    "currency": {
+                        "$ref": "#/components/schemas/CurrencyEnum"
+                    }
+                },
+                "required": [
+                    "account",
+                    "amount",
+                    "currency"
+                ]
+            },
+            "LoginIn": {
+                "type": "object",
+                "properties": {
+                    "username": {
+                        "type": "string",
+                        "maxLength": 150
+                    },
+                    "password": {
+                        "type": "string",
+                        "maxLength": 128
+                    }
+                },
+                "required": [
+                    "password",
+                    "username"
+                ]
+            },
+            "MeOut": {
+                "type": "object",
+                "properties": {
+                    "tenant_id": {
+                        "type": "integer"
+                    },
+                    "tenant": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "tenant",
+                    "tenant_id"
+                ]
+            },
+            "PaginatedAccountOutList": {
+                "type": "object",
+                "required": [
+                    "results"
+                ],
+                "properties": {
+                    "next": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?cursor=cD00ODY%3D\""
+                    },
+                    "previous": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?cursor=cj0xJnA9NDg3"
+                    },
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/AccountOut"
+                        }
+                    }
+                }
+            },
+            "PaginatedEntryOutList": {
+                "type": "object",
+                "required": [
+                    "results"
+                ],
+                "properties": {
+                    "next": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?cursor=cD00ODY%3D\""
+                    },
+                    "previous": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?cursor=cj0xJnA9NDg3"
+                    },
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/EntryOut"
+                        }
+                    }
+                }
+            },
+            "ProblemOut": {
+                "type": "object",
+                "description": "RFC 9457 body every error carries; see tally.api.problems.",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "format": "uri"
+                    },
+                    "title": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "detail": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "detail",
+                    "status",
+                    "title",
+                    "type"
+                ]
+            },
+            "ResolutionEnum": {
+                "enum": [
+                    "adjusted",
+                    "explained"
+                ],
+                "type": "string",
+                "description": "* `adjusted` - adjusted\n* `explained` - explained"
+            },
+            "ResolveIn": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "$ref": "#/components/schemas/ActionEnum"
+                    },
+                    "account": {
+                        "type": "string",
+                        "description": "for adjust",
+                        "maxLength": 32
+                    },
+                    "explanation": {
+                        "type": "string",
+                        "description": "for explain"
+                    }
+                },
+                "required": [
+                    "action"
+                ]
+            },
+            "ReverseIn": {
+                "type": "object",
+                "properties": {
+                    "occurred_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "SessionOut": {
+                "type": "object",
+                "properties": {
+                    "username": {
+                        "type": "string"
+                    },
+                    "tenant_id": {
+                        "type": "integer"
+                    },
+                    "tenant": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "tenant",
+                    "tenant_id",
+                    "username"
+                ]
+            },
+            "SourceEnum": {
+                "enum": [
+                    "bank",
+                    "processor"
+                ],
+                "type": "string",
+                "description": "* `bank` - bank\n* `processor` - processor"
+            },
+            "SourceIn": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "id": {
+                        "type": "string",
+                        "maxLength": 128
+                    }
+                },
+                "required": [
+                    "id",
+                    "type"
+                ]
+            },
+            "StatementLineOut": {
+                "type": "object",
+                "properties": {
+                    "line_no": {
+                        "type": "integer",
+                        "maximum": 2147483647,
+                        "minimum": 0
+                    },
+                    "occurred_on": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "amount": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,12}(?:\\.\\d{0,6})?$"
+                    },
+                    "currency": {
+                        "$ref": "#/components/schemas/CurrencyEnum"
+                    },
+                    "reference": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "description": {
+                        "type": "string",
+                        "maxLength": 200
+                    },
+                    "matched_entry": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "match_rule": {
+                        "type": "string",
+                        "maxLength": 16
+                    }
+                },
+                "required": [
+                    "amount",
+                    "currency",
+                    "line_no",
+                    "matched_entry",
+                    "occurred_on"
+                ]
+            },
+            "StatementOut": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "source": {
+                        "$ref": "#/components/schemas/SourceEnum"
+                    },
+                    "period_start": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "period_end": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "uploaded_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "reconciled_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "lines": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/StatementLineOut"
+                        }
+                    },
+                    "exceptions": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/ExceptionOut"
+                        }
+                    }
+                },
+                "required": [
+                    "exceptions",
+                    "id",
+                    "lines",
+                    "period_end",
+                    "period_start",
+                    "source",
+                    "uploaded_at"
+                ]
+            },
+            "TypeEnum": {
+                "enum": [
+                    "asset",
+                    "liability",
+                    "equity",
+                    "revenue",
+                    "expense"
+                ],
+                "type": "string",
+                "description": "* `asset` - asset\n* `liability` - liability\n* `equity` - equity\n* `revenue` - revenue\n* `expense` - expense"
+            },
+            "WebhookEndpointCreated": {
+                "type": "object",
+                "description": "The secret appears here and nowhere else.",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "url": {
+                        "type": "string",
+                        "format": "uri",
+                        "maxLength": 500
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "disabled_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "secret": {
+                        "type": "string",
+                        "maxLength": 64
+                    }
+                },
+                "required": [
+                    "created_at",
+                    "id",
+                    "secret",
+                    "url"
+                ]
+            },
+            "WebhookEndpointIn": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "format": "uri",
+                        "maxLength": 500
+                    }
+                },
+                "required": [
+                    "url"
+                ]
+            },
+            "WebhookEndpointOut": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "url": {
+                        "type": "string",
+                        "format": "uri",
+                        "maxLength": 500
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "disabled_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "created_at",
+                    "id",
+                    "url"
+                ]
+            }
+        },
+        "securitySchemes": {
+            "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-Api-Key"
+            },
+            "SessionAuth": {
+                "type": "apiKey",
+                "in": "cookie",
+                "name": "sessionid"
+            }
+        }
+    }
+}

@@ -3,7 +3,7 @@ from datetime import date
 from django.urls import path, register_converter
 from drf_spectacular.views import SpectacularJSONAPIView, SpectacularRedocView
 
-from tally.api import internal, reconciliation, views, webhooks
+from tally.api import console, internal, reconciliation, views, webhooks
 
 
 class DateConverter:
@@ -22,6 +22,9 @@ urlpatterns = [
     path("health", views.health, name="health"),
     path("openapi.json", SpectacularJSONAPIView.as_view(), name="openapi"),
     path("docs", SpectacularRedocView.as_view(url_name="openapi"), name="docs"),
+    path("console/session", console.session, name="console-session"),
+    path("console/login", console.login_view, name="console-login"),
+    path("console/logout", console.logout_view, name="console-logout"),
     path("api/me", views.me, name="me"),
     path("api/entries", views.EntryList.as_view(), name="entries"),
     path("api/entries/<int:entry_id>", views.EntryDetail.as_view(), name="entry"),

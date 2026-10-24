@@ -14,6 +14,6 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: { '/health': 'http://localhost:8001', '/api': 'http://localhost:8001' },
+    proxy: { '/api': 'http://localhost:8001', '/console': 'http://localhost:8001' },
   },
 })
