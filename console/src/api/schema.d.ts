@@ -427,6 +427,12 @@ export interface components {
             readonly adjusting_entry: number;
             explanation?: string;
         };
+        /**
+         * @description * `month` - month
+         *     * `year` - year
+         * @enum {string}
+         */
+        IntervalEnum: "month" | "year";
         InvoiceOut: {
             readonly id: number;
             subscription: number;
@@ -439,7 +445,7 @@ export interface components {
             /** Format: decimal */
             amount: string;
             currency: components["schemas"]["CurrencyEnum"];
-            status?: components["schemas"]["InvoiceOutStatusEnum"];
+            status: components["schemas"]["InvoiceOutStatusEnum"];
             /** Format: date-time */
             issued_at: string;
             /** Format: date-time */
@@ -617,9 +623,9 @@ export interface components {
             plan_name: string;
             /** Format: decimal */
             amount: string;
-            currency: string;
-            interval: string;
-            status?: components["schemas"]["SubscriptionOutStatusEnum"];
+            currency: components["schemas"]["CurrencyEnum"];
+            interval: components["schemas"]["IntervalEnum"];
+            status: components["schemas"]["SubscriptionOutStatusEnum"];
             /** Format: date-time */
             started_at: string;
             /** Format: date-time */

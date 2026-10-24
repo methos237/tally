@@ -122,7 +122,8 @@ class Command(BaseCommand):
                 invoices, paid = self.seed_billing(tenant, SUBSCRIPTIONS[name], rng)
                 exceptions = self.seed_statement(tenant)
                 if name == TENANTS[0]:
-                    user = get_user_model().objects.create_user(*OPERATOR)
+                    username, password = OPERATOR
+                    user = get_user_model().objects.create_user(username, password=password)
                     Operator.objects.create(user=user, tenant=tenant)
                     self.seed_dead_letters(tenant)
             self.stdout.write(

@@ -25,6 +25,6 @@ describe('router guard', () => {
     session.loaded = true
     session.current = { username: 'ops', tenant_id: 1, tenant: 'Acme Corp' }
     await router.push('/login')
-    expect(router.currentRoute.value.name).toBe('home')
+    expect(router.currentRoute.value.name).toBe('dashboard')
   })
 })

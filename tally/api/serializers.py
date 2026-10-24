@@ -141,8 +141,9 @@ class SubscriptionOut(serializers.ModelSerializer[models.Subscription]):
     plan = serializers.CharField(source="plan.code")
     plan_name = serializers.CharField(source="plan.name")
     amount = AmountField(source="plan.amount")
-    currency = serializers.CharField(source="plan.currency")
-    interval = serializers.CharField(source="plan.interval")
+    currency = serializers.ChoiceField(choices=CURRENCIES, source="plan.currency")
+    interval = serializers.ChoiceField(choices=["month", "year"], source="plan.interval")
+    status = serializers.ChoiceField(choices=["active", "past_due", "canceled"])
 
     class Meta:
         model = models.Subscription
@@ -162,6 +163,7 @@ class SubscriptionOut(serializers.ModelSerializer[models.Subscription]):
 
 class InvoiceOut(serializers.ModelSerializer[models.Invoice]):
     customer = serializers.CharField(source="subscription.customer.name")
+    status = serializers.ChoiceField(choices=["open", "paid"])
 
     class Meta:
         model = models.Invoice

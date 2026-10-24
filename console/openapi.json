@@ -1330,6 +1330,14 @@
                     "statement"
                 ]
             },
+            "IntervalEnum": {
+                "enum": [
+                    "month",
+                    "year"
+                ],
+                "type": "string",
+                "description": "* `month` - month\n* `year` - year"
+            },
             "InvoiceOut": {
                 "type": "object",
                 "properties": {
@@ -1385,6 +1393,7 @@
                     "issued_at",
                     "period_end",
                     "period_start",
+                    "status",
                     "subscription"
                 ]
             },
@@ -1862,10 +1871,10 @@
                         "pattern": "^-?\\d{0,12}(?:\\.\\d{0,6})?$"
                     },
                     "currency": {
-                        "type": "string"
+                        "$ref": "#/components/schemas/CurrencyEnum"
                     },
                     "interval": {
-                        "type": "string"
+                        "$ref": "#/components/schemas/IntervalEnum"
                     },
                     "status": {
                         "$ref": "#/components/schemas/SubscriptionOutStatusEnum"
@@ -1888,7 +1897,8 @@
                     "interval",
                     "plan",
                     "plan_name",
-                    "started_at"
+                    "started_at",
+                    "status"
                 ]
             },
             "SubscriptionOutStatusEnum": {

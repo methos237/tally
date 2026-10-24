@@ -22,7 +22,8 @@ def test_seed_demo_is_balanced_and_idempotent() -> None:
     call_command("seed_demo", stdout=StringIO())
 
     assert Tenant.objects.count() == 2
-    assert Operator.objects.get(user__username="ops").tenant.name == "Acme Corp"
+    operator = Operator.objects.get(user__username="ops")
+    assert operator.tenant.name == "Acme Corp" and operator.user.check_password("ops-demo")
     assert Account.objects.count() == 24
     assert (Plan.objects.count(), Subscription.objects.count()) == (6, 25)
     invoices, paid = Invoice.objects.count(), Invoice.objects.filter(status="paid").count()
