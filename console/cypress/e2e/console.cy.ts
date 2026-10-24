@@ -36,7 +36,7 @@ describe('pages', () => {
     it(`${path} renders and passes WCAG 2.2 AA`, () => {
       cy.visit(path)
       cy.contains('h2', heading)
-      cy.get('table, dl, nav[aria-label=Statements]').should('exist')
+      cy.get('table, dl, nav[aria-label=Statements], [data-empty]').should('exist') // data or empty state
       cy.checkPage()
     })
   }

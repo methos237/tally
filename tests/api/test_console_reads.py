@@ -78,7 +78,7 @@ def test_endpoints_count_their_dead_letters(client: APIClient, tenant: Tenant) -
 
 @pytest.mark.django_db
 def test_reports_list_and_download(
-    client: APIClient, other_client: APIClient, tenant: Tenant, invoiced: Subscription
+    client: APIClient, other_client: APIClient, tenant: Tenant, invoiced: Subscription, bucket: str
 ) -> None:
     reports.write(tenant, DAY.date())
     rows = client.get("/api/reports").json()

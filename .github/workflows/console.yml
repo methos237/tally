@@ -74,4 +74,4 @@ jobs:
           echo "LHCI_EXTRA_HEADERS={\"Cookie\":\"sessionid=$(awk '/sessionid/ {print $7}' jar)\"}" >> "$GITHUB_ENV"
       - run: npx -y @lhci/cli@0.15.1 autorun
       - if: failure()
-        run: tail -50 /tmp/django.log /tmp/vite.log
+        run: tail -n 50 /tmp/django.log /tmp/vite.log
