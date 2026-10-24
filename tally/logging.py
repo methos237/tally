@@ -18,3 +18,4 @@ def configure(json: bool = True) -> None:
         cache_logger_on_first_use=True,
     )
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("stripe").setLevel(logging.WARNING)  # one line per API call otherwise
