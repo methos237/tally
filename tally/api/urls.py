@@ -1,6 +1,7 @@
 from datetime import date
 
 from django.urls import path, register_converter
+from django_prometheus.exports import ExportToDjangoView
 from drf_spectacular.views import SpectacularJSONAPIView, SpectacularRedocView
 
 from tally.api import console, internal, reconciliation, report_views, views, webhooks
@@ -20,6 +21,7 @@ register_converter(DateConverter, "date")
 
 urlpatterns = [
     path("health", views.health, name="health"),
+    path("metrics", internal.internal(ExportToDjangoView), name="metrics"),  # X-Internal-Token
     path("openapi.json", SpectacularJSONAPIView.as_view(), name="openapi"),
     path("docs", SpectacularRedocView.as_view(url_name="openapi"), name="docs"),
     path("console/session", console.session, name="console-session"),
