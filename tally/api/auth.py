@@ -6,6 +6,7 @@ from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
 from rest_framework.request import Request
 
+from tally.adapters import rls
 from tally.adapters.models import ApiKey, Operator, Tenant
 
 HEADER = "X-Api-Key"
@@ -19,6 +20,7 @@ class ApiKeyAuthentication(authentication.BaseAuthentication):
         key = ApiKey.authenticate(presented)
         if key is None:
             raise exceptions.AuthenticationFailed("Unknown or revoked API key")
+        rls.bind(key.tenant_id)  # from here the database shows this tenant's rows only
         return key.tenant, key
 
     def authenticate_header(self, request: Request) -> str:
@@ -38,6 +40,7 @@ class ConsoleSessionAuthentication(authentication.SessionAuthentication):
         if operator is None:
             return None
         self.enforce_csrf(request)
+        rls.bind(operator.tenant_id)
         return operator.tenant, operator
 
     def authenticate_header(self, request: Request) -> str:
