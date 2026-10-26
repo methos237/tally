@@ -2,7 +2,7 @@
 
 Billing and ledger platform in Python: a double-entry ledger with a provable balancing invariant, idempotent posting under concurrency, subscription billing against Stripe test mode, webhooks in both directions, statement reconciliation, a nightly partner report orchestrated by Airflow, and a Vue 3 operations console.
 
-A tenant posts financial events through an API. Every event becomes a balanced journal entry or is rejected with the reason. Subscriptions invoice on a schedule and collect through Stripe; the ledger, not Stripe, is the source of truth. Bank statements are imported and reconciled against the journal, and anything that does not match becomes an exception an operator resolves from the console. Every write is idempotent, every account mutation is locked in a fixed order, and the journal cannot be edited after the fact: corrections are reversing entries. Everything runs in Docker Compose with no cloud account and no card on file.
+A tenant posts financial events through an API. Tally posts each one as a balanced journal entry or rejects it with the reason. Subscriptions invoice on a schedule and collect through Stripe, and the ledger stays the source of truth. You import bank statements, Tally reconciles them against the journal, and an operator resolves the lines that do not match from the console. Each write is idempotent, posting locks accounts in a fixed order, and nobody edits the journal after the fact: a correction is a reversing entry. Docker Compose runs the whole thing with no cloud account and no card on file.
 
 **Status.** Phases 0 to 6 are done: everything below runs from a clean checkout with Docker and uv. Phase 7 (stretch items) is open. The phase list at the end records what landed and when.
 
@@ -21,7 +21,7 @@ It brings compose up (Postgres, Redis, stripe-mock, RustFS, Jaeger, Airflow), mi
 3. settles yesterday and triggers the `partner_daily_report` DAG in Airflow, which writes a CSV per tenant to the S3 bucket;
 4. prints the balances of cash, receivables and revenue, and the links: Jaeger traces, Airflow, `/internal/metrics`.
 
-Then `make console` and open <http://localhost:8001> as `ops` / `ops-demo` for the dashboard, journal, reconciliation workbench and the rest. Every request the demo made is a trace in Jaeger at <http://localhost:16687>, including the outbox write and the Celery delivery that followed it.
+Then `make console` and open <http://localhost:8001> as `ops` / `ops-demo` for the dashboard, journal, reconciliation workbench and the rest. Each request the demo made is a trace in Jaeger at <http://localhost:16687>, including the outbox write and the Celery delivery that followed it.
 
 ## Architecture
 
@@ -82,29 +82,29 @@ cd console && npm ci && npm run dev   # Vite on 5173 for console work, proxies /
 
 ## The ledger
 
-Double entry means every event is recorded twice: once where value came from and once where it went. An invoice for 149.00 debits accounts receivable (an asset grows) and credits revenue (income is recognized). The payment that settles it debits cash and credits receivable. Each side is a `Line` with a signed amount; debits are positive, credits negative, and the lines of one `JournalEntry` always sum to zero. Because every entry is zero-sum, the sum of all balances across the chart is zero at every instant, and any balance can be recomputed from the journal alone.
+Double entry records each event twice: once where value came from and once where it went. An invoice for 149.00 debits accounts receivable (an asset grows) and credits revenue (income recognized). The payment that settles it debits cash and credits receivable. Each side is a `Line` with a signed amount; debits are positive, credits negative, and the lines of one `JournalEntry` always sum to zero. Because every entry is zero-sum, the sum of all balances across the chart is zero at every instant, and any balance can be recomputed from the journal alone.
 
 An `Account` has a type (asset, liability, equity, revenue, expense), a code, a currency and a tenant. A `JournalEntry` has at least two `Line`s; within one entry the amounts sum to zero per currency, no line is zero, and every line is in its account's currency. That is the invariant, and it is enforced three times:
 
 | Where | How | Why it is there |
 |---|---|---|
-| Domain | `post(entry, accounts)` in `tally/domain/journal.py` checks line count, zero lines, account ownership and currency, then balance, in that order, and raises `SingleLineEntry`, `ZeroLine`, `AmountOutOfRange`, `UnknownAccount`, `CurrencyMismatch` or `UnbalancedEntry` carrying the currency and the difference | The rule is one pure function. Hypothesis generates balanced entries and balanced entries nudged by a known delta; the property is that every balanced entry posts and every nudged one is rejected with exactly that delta. CI runs 1,000 examples |
+| Domain | `post(entry, accounts)` in `tally/domain/journal.py` checks line count, zero lines, account ownership and currency, then balance, in that order, and raises `SingleLineEntry`, `ZeroLine`, `AmountOutOfRange`, `UnknownAccount`, `CurrencyMismatch` or `UnbalancedEntry` carrying the currency and the difference | The rule is one pure function. Hypothesis generates balanced entries and balanced entries nudged by a known delta; the property is that each balanced entry posts and each nudged one is rejected with that delta. CI runs 1,000 examples |
 | Database | A `CHECK (amount <> 0)` on `journal_lines`, and a deferred constraint trigger on both `journal_entries` and `journal_lines` that, at commit, rejects any entry with fewer than two lines or a nonzero sum per currency | Protects the journal from code that bypasses the domain. The tests write raw SQL and prove an unbalanced insert fails at `COMMIT`, after the rows were visible inside the transaction |
-| API | 422 problem details naming the currency and the difference | The caller learns exactly what to fix |
+| API | 422 problem details naming the currency and the difference | The caller learns what to fix |
 
-**Append-only.** `journal_entries` and `journal_lines` carry `BEFORE UPDATE OR DELETE` triggers that raise, so neither the ORM nor a `psql` session can edit history. A mistake is corrected by a reversing entry: `ReverseEntry` negates every line of the original and links the new entry to it; the link is a unique column, so the database itself refuses a second reversal and the repository reports it as `AlreadyReversed`. An auditor reads the original, the reversal and the correction, not a row that quietly changed.
+**Append-only.** `journal_entries` and `journal_lines` carry `BEFORE UPDATE OR DELETE` triggers that raise, so neither the ORM nor a `psql` session can edit history. You correct a mistake with a reversing entry: `ReverseEntry` negates each line of the original and links the new entry to it; the link is a unique column, so the database refuses a second reversal and the repository reports it as `AlreadyReversed`. An auditor reads the original, the reversal and the correction.
 
-**Projection.** Balances are not stored on accounts. `account_balances(account_id, balance, as_of)` is a projection: every post upserts the touched accounts inside the same transaction, and `manage.py replay_balances` truncates the table and rebuilds it with one `GROUP BY` over the journal. A test posts random entries, reverses some, corrupts the projection, and asserts the rebuild equals both the incremental table and a fresh fold in Python.
+**Projection.** Accounts do not store balances. `account_balances(account_id, balance, as_of)` is a projection: each post upserts the touched accounts inside the same transaction, and `manage.py replay_balances` truncates the table and rebuilds it with one `GROUP BY` over the journal. A test posts random entries, reverses some, corrupts the projection, and asserts the rebuild equals both the incremental table and a fresh fold in Python.
 
-**What "event sourced" means here.** The journal is the event log and the balance is derived state that can be thrown away and recomputed. That is event sourcing in its plain form, and it applies to the ledger only. Tenants, accounts, plans and subscriptions are ordinary rows that are updated in place. The README says so to avoid overselling the word.
+**What "event sourced" means here.** The journal is the event log; the balance is derived state you can throw away and recompute. That is event sourcing in its plain form, and it applies to the ledger only. Tenants, accounts, plans and subscriptions are ordinary rows updated in place.
 
-**Money.** `Money(amount: Decimal, currency)` quantizes to six decimal places with `ROUND_HALF_EVEN` on construction, the one place rounding happens; display rounds to the currency's exponent (2 for USD, EUR, GBP; 0 for JPY). Floats are refused with `TypeError`, non-finite values with `ValueError`. Lines must fit `numeric(18,6)`, so `post()` rejects any line at or beyond 10^12 with `AmountOutOfRange` rather than letting the database truncate it. Mixed-currency arithmetic raises `CurrencyMismatch`.
+**Money.** `Money(amount: Decimal, currency)` quantizes to six decimal places with `ROUND_HALF_EVEN` on construction, the one place rounding happens; display rounds to the currency's exponent (2 for USD, EUR, GBP; 0 for JPY). It refuses floats with `TypeError` and non-finite values with `ValueError`. Lines must fit `numeric(18,6)`, so `post()` rejects any line at or beyond 10^12 with `AmountOutOfRange` rather than letting the database truncate it. Mixed-currency arithmetic raises `CurrencyMismatch`.
 
 **Layers.** `tally/domain` imports nothing from Django; `import-linter` fails CI if it does. `tally/application` holds `PostEntry` and `ReverseEntry` over a `JournalRepository` Protocol and is tested against an in-memory fake. `tally/adapters` implements the port with the Django ORM, owns the migrations and triggers, and ships `seed_demo`: two tenants, a 12-account chart each, and 400 deterministic entries over 90 days.
 
 ## Posting API
 
-Every request carries `X-Api-Key`; every write also carries `Idempotency-Key`. Keys are issued per tenant and shown once:
+Each request carries `X-Api-Key`; each write also carries `Idempotency-Key`. Tally issues keys per tenant and shows them once:
 
 ```bash
 uv run python manage.py seed_demo                      # two tenants, chart of accounts, 90 days of entries
@@ -143,21 +143,21 @@ curl -s localhost:8001/api/accounts/1200/balance -H "X-Api-Key: $KEY" | jq
 | `GET /api/me` | Confirms a key and names the tenant |
 | `GET /openapi.json`, `GET /docs` | OpenAPI 3 document and Redoc, no key required |
 
-Amounts are strings with six decimal places on the wire; a JSON number is rejected so a float can never reach the ledger.
+Amounts travel as strings with six decimal places; the serializer rejects JSON numbers, so no float reaches the ledger.
 
 | Concern | Behaviour |
 |---|---|
 | Idempotency | Every write needs an `Idempotency-Key` (400 without one). The key, a SHA-256 of method, path and body, and the response are stored in `idempotency_records` in the same transaction as the business write. Same key and same body: the stored response is replayed with `Idempotent-Replayed: true`. Same key and a different body: 422. A failed attempt rolls back with its record, so a corrected retry is accepted. Concurrent requests with one key block on the unique index and replay. Keys expire after 24 hours (Celery Beat, hourly) |
 | Locking | Posting locks the touched accounts with `SELECT ... FOR UPDATE` ordered by account id, so two entries naming the same accounts in opposite order cannot deadlock. 20 threads post 200 entries at two accounts in alternating order and the final balances are exact |
-| Consistency | Entries are read-your-writes; replays are byte-identical; the balance projection is updated in the posting transaction today and its lag is defined so Phase 6 can measure it. [`docs/consistency.md`](docs/consistency.md) spells out which reads see what |
+| Consistency | Entries are read-your-writes; replays are byte-identical; the posting transaction updates the balance projection, and `/internal/metrics` reports its lag. [`docs/consistency.md`](docs/consistency.md) spells out which reads see what |
 | Rate limiting | Token bucket per API key in Redis, one atomic Lua script, default 100 requests per minute with a per-tenant override. Every authenticated response carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`; exhaustion is a 429 problem with `Retry-After` |
-| Tenancy | Keys resolve to a tenant; every query filters by it. Another tenant's entry or account is a 404, never a 403 |
+| Tenancy | Keys resolve to a tenant; each query filters by it. Another tenant's entry or account is a 404, not a 403 |
 | Authentication | `X-Api-Key` checked against an Argon2 hash; only an 8-character prefix is stored in the clear for lookup. Missing, unknown or revoked keys are 401 with `WWW-Authenticate: X-Api-Key` |
 | Errors | RFC 9457 problem details everywhere (`application/problem+json`), one handler. Domain rejections are `type: .../posting/UnbalancedEntry` and friends; an unbalanced entry names the currency and the difference |
 
 ## Billing and Stripe
 
-Tally owns the subscription engine and the books; Stripe only collects. Stripe's own Billing product is deliberately not used: the point of this repo is the engine.
+Tally owns the subscription engine and the books; Stripe collects. This repo does not use Stripe Billing; the engine is the point.
 
 ```
                  payment_succeeded
@@ -175,11 +175,11 @@ Tally owns the subscription engine and the books; Stripe only collects. Stripe's
 
 The state machine is a transition table in `tally/domain/billing.py`; a Hypothesis test walks every `(status, event)` pair and checks it is either in the table or rejected. Subscriptions bill in advance: `billed_through` null or past means due. Celery Beat runs `bill_due_subscriptions` every minute; each due subscription gets an `Invoice` (unique on subscription and period start, so an overlapping run cannot double-bill) and a journal entry debiting accounts receivable 1200 and crediting revenue 4000. Periods clamp to month end, so the 31st bills on the 28th and never skips a month.
 
-**What Stripe does, what the ledger does.** `collect_invoice` creates one Stripe `Customer` per Tally customer and one `PaymentIntent` per invoice, then confirms it server-side with the `4242` test card, off session, redirects disabled, each call under its own idempotency key so a retried task cannot charge twice. The intent id is stored on the invoice *before* confirmation, so the webhook is the only writer of "paid": it resolves the invoice by that id, never by metadata, and a declined card reaches the same invoice as `payment_intent.payment_failed`. A paid invoice posts cash 1000 against receivable 1200 and reactivates a past-due subscription; a failed payment moves the subscription to `past_due`. Invoices do not store their journal entries; the journal's `(source_type, source_id)` already links back to the invoice. One module, `tally/adapters/stripe_gateway.py`, builds the `StripeClient` from settings and is the only place that imports the SDK.
+**What Stripe does, what the ledger does.** `collect_invoice` creates one Stripe `Customer` per Tally customer and one `PaymentIntent` per invoice, then confirms it server-side with the `4242` test card, off session, redirects disabled, each call under its own idempotency key so a retried task cannot charge twice. `collect_invoice` stores the intent id on the invoice *before* confirming, so the webhook is the only writer of "paid": it resolves the invoice by that id, not by metadata, and a declined card reaches the same invoice as `payment_intent.payment_failed`. A paid invoice posts cash 1000 against receivable 1200 and reactivates a past-due subscription; a failed payment moves the subscription to `past_due`. Invoices do not store their journal entries; the journal's `(source_type, source_id)` links back to the invoice. One module, `tally/adapters/stripe_gateway.py`, builds the `StripeClient` from settings and is the only place that imports the SDK.
 
-**Inbound webhooks.** `POST /webhooks/stripe` verifies `Stripe-Signature` with the SDK (HMAC-SHA256, timestamps older than five minutes rejected), inserts `event.id` into `stripe_events`, returns 200 and hands the row to `process_stripe_event`. A tampered signature is a 400 and nothing is stored; the same event delivered twice is acknowledged and processed once; an intent Tally never created (a `stripe trigger` fixture, say) is acknowledged and books nothing.
+**Inbound webhooks.** `POST /webhooks/stripe` verifies `Stripe-Signature` with the SDK (HMAC-SHA256, timestamps older than five minutes rejected), inserts `event.id` into `stripe_events`, returns 200 and hands the row to `process_stripe_event`. A tampered signature gets a 400 and Tally stores nothing; the same event delivered twice gets a 200 and runs once; an intent Tally did not create (a `stripe trigger` fixture, say) gets a 200 and books nothing.
 
-**Outbound webhooks.** Tenants register endpoints with `POST /api/webhook-endpoints` and receive the secret once. Events (`entry.posted` for every journal entry, `invoice.issued`, `invoice.paid`, `subscription.past_due`, `subscription.active`, `reconciliation.exception`, `report.ready`) are written to `webhook_outbox` in the same transaction as the business write, so they commit or roll back with it. `deliver_due_webhooks` sweeps every ten seconds and posts the envelope `{"id", "type", "created_at", "data"}` with:
+**Outbound webhooks.** Tenants register endpoints with `POST /api/webhook-endpoints` and receive the secret once. The business write puts its events (`entry.posted` for each journal entry, `invoice.issued`, `invoice.paid`, `subscription.past_due`, `subscription.active`, `reconciliation.exception`, `report.ready`) into `webhook_outbox` in its own transaction, so they commit or roll back with it. `deliver_due_webhooks` sweeps every ten seconds and posts the envelope `{"id", "type", "created_at", "data"}` with:
 
 ```
 X-Tally-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>
@@ -200,15 +200,15 @@ Date,Description,Reference,Amount              bank: signed amounts in the tenan
 id,created,amount,currency,description         processor: Stripe balance-transaction style, id is the reference
 ```
 
-`POST /api/statements/{id}/reconcile` runs the matching rules in `tally/domain/reconciliation.py` against the cash account's movements in the statement window (plus three days either side). The rules run in order per line, lowest line first, and every ledger entry is used at most once:
+`POST /api/statements/{id}/reconcile` runs the matching rules in `tally/domain/reconciliation.py` against the cash account's movements in the statement window (plus three days either side). The rules run in order per line, lowest line first, and each ledger entry matches at most once:
 
 1. `reference`: an entry carries the line's reference (the entry's source id, or the Stripe PaymentIntent id for a payment) and the same amount.
 2. `amount_window`: same amount within three days; the earliest candidate wins.
 3. Otherwise an exception: `amount_differs` when the reference matched with another amount (the difference is carried), `unmatched` when nothing fits.
 
-A Hypothesis test checks that every line ends matched or excepted exactly once and that shuffling the input changes nothing. Re-running reconcile only touches lines that are still unplaced.
+A Hypothesis test checks that each line ends matched or excepted once and that shuffling the input changes nothing. Re-running reconcile only touches lines that are still unplaced.
 
-**Exception lifecycle.** Each exception is a row with a reason and a `reconciliation.exception` outbound webhook. `GET /api/reconciliation-exceptions?status=open` lists them. `POST /api/reconciliation-exceptions/{id}/resolve` takes `{"action": "adjust", "account": "6100"}`, which posts the difference as a balanced adjusting entry (cash against the chosen account, source `adjustment/{exception id}`), or `{"action": "explain", "explanation": "..."}`, which records the reason without touching the books. A resolved exception cannot be resolved again (409). The statement's `reconciled_at` is set the moment no line is unplaced and no exception is open. The seed leaves one statement per tenant with exactly three exceptions: a bank fee, an unidentified deposit, and a settlement one cent off.
+**Exception lifecycle.** Each exception is a row with a reason and a `reconciliation.exception` outbound webhook. `GET /api/reconciliation-exceptions?status=open` lists them. `POST /api/reconciliation-exceptions/{id}/resolve` takes `{"action": "adjust", "account": "6100"}`, which posts the difference as a balanced adjusting entry (cash against the chosen account, source `adjustment/{exception id}`), or `{"action": "explain", "explanation": "..."}`, which records the reason without touching the books. A resolved exception cannot be resolved again (409). Tally sets the statement's `reconciled_at` the moment no line is unplaced and no exception is open. The seed leaves one statement per tenant with three exceptions: a bank fee, an unidentified deposit, and a settlement one cent off.
 
 **Nightly report.** `manage.py partner_report --date 2026-10-22 [--tenant 1] [--notify]` writes one CSV per tenant to the `reports` bucket (RustFS in compose, any S3 endpoint in production) at `{tenant}/{date}.csv`: account balances as of the day, invoice counts and totals by status, open exceptions. A rerun overwrites the same key, which is what a backfill wants. `--notify` queues a `report.ready` webhook naming the bucket and key.
 
@@ -224,7 +224,7 @@ Retries 3, five minutes apart; `dagrun_timeout` of 30 minutes stands in for the 
 
 ## Console
 
-Vue 3 with `<script setup>` and TypeScript, Vite, Pinia, Vue Router, Tailwind CSS and `@tanstack/vue-query`. Operators sign in with a Django session (`POST /console/login`, CSRF-protected) and the session then authenticates them to the whole API as their tenant, so the console calls the same endpoints integrators do. The client is generated from the API's OpenAPI document with `openapi-typescript` and called through `openapi-fetch`; `console/openapi.json` is committed and a test fails when it drifts from the served schema (`make openapi` regenerates both the document and the types).
+Vue 3 with `<script setup>` and TypeScript, Vite, Pinia, Vue Router, Tailwind CSS and `@tanstack/vue-query`. Operators sign in with a Django session (`POST /console/login`, CSRF-protected) and the session then authenticates them to the whole API as their tenant, so the console calls the same endpoints integrators do. `openapi-typescript` generates the client types from the API's OpenAPI document and `openapi-fetch` calls it; the repo commits `console/openapi.json`, and a test fails when it drifts from the served schema (`make openapi` regenerates both the document and the types).
 
 ```bash
 cd console && npm ci && npm run dev    # Vite on 5173, proxies /api and /console to Django on 8001
@@ -234,7 +234,7 @@ npm run storybook                      # component library on 6006
 npm run test:e2e                       # Cypress against 8001 (make console, make dev, seed_demo)
 ```
 
-The component library is in Storybook with the a11y addon treating violations as errors, published to GitHub Pages at <https://methos237.github.io/tally/>: `TallyTable`, `MoneyCell` (decimal strings formatted per currency, never through a float), `StatusBadge`, `JournalLines` (signed amounts split into debit and credit), `ExceptionCard`, `Pagination` (cursor URLs), `EmptyState`. Each component has a Vitest unit test.
+Storybook holds the component library with the a11y addon treating violations as errors, published to GitHub Pages at <https://methos237.github.io/tally/>: `TallyTable`, `MoneyCell` (decimal strings formatted per currency, never through a float), `StatusBadge`, `JournalLines` (signed amounts split into debit and credit), `ExceptionCard`, `Pagination` (cursor URLs), `EmptyState`. Each component has a Vitest unit test.
 
 Pages: dashboard (balances by type, open invoices, dead letters, open exceptions), journal browser (filters, cursor pagination, entry drawer with lines), accounts with balance as of a date and latest entries, subscriptions and invoices, webhook endpoints with dead letters and a redeliver button, reconciliation workbench (statement lines beside exceptions, candidate cash entries within the matching window, a resolve dialog that explains or posts an adjusting entry) and the partner report list with downloads streamed through the API so the bucket stays private.
 
@@ -252,9 +252,9 @@ More in [`docs/screenshots/`](docs/screenshots/).
 
 ## Observability
 
-**Traces.** OpenTelemetry is configured once in `ApiConfig.ready()`, so Django and the Celery worker set up the same provider: Django, psycopg, Redis, urllib and Celery are auto-instrumented and spans go OTLP/HTTP to the Jaeger container (`OTEL_EXPORTER_OTLP_ENDPOINT`, empty disables export). Only `runserver` and the Celery worker export; management commands and Beat produce no spans and would otherwise block at exit when the collector is down. Every request is sampled by default; `OTEL_TRACES_SAMPLER=parentbased_traceidratio` with `OTEL_TRACES_SAMPLER_ARG=0.1` is the SDK's own knob for volume. The interesting hop is the outbox: a delivery is picked up by a Beat sweep, not enqueued from the request, so Celery's own context propagation cannot link it. The outbox row stores the W3C `traceparent` of the request that published the event, `webhook.deliver` continues that context, and urllib forwards it to the tenant. One trace therefore reads `POST api/entries` → SQL → `outbox.publish` → `webhook.deliver` → `POST` to the endpoint; a test asserts the four spans share a trace id and that the receiver saw the `Traceparent` header.
+**Traces.** `ApiConfig.ready()` configures OpenTelemetry once, so Django and the Celery worker set up the same provider: the Django, psycopg, Redis, urllib and Celery instrumentors are on and spans go OTLP/HTTP to the Jaeger container (`OTEL_EXPORTER_OTLP_ENDPOINT`, empty disables export). Only `runserver` and the Celery worker export; management commands and Beat produce no spans and would otherwise block at exit when the collector is down. Tally samples each request by default; `OTEL_TRACES_SAMPLER=parentbased_traceidratio` with `OTEL_TRACES_SAMPLER_ARG=0.1` is the SDK's own knob for volume. The hard hop is the outbox: a Beat sweep picks the delivery up later, so Celery's own context propagation cannot link it to the request. The outbox row stores the W3C `traceparent` of the request that published the event, `webhook.deliver` continues that context, and urllib forwards it to the tenant. One trace reads `POST api/entries` → SQL → `outbox.publish` → `webhook.deliver` → `POST` to the endpoint; a test asserts the four spans share a trace id and that the receiver saw the `Traceparent` header.
 
-**Metrics.** `GET /internal/metrics` (header `X-Internal-Token`) is Prometheus text. `django-prometheus` records request latency per view. The business numbers are computed from the database at scrape time by one collector, so they are right across every Django and Celery process without in-process counters: `tally_journal_entries_total` (posting rate via `rate()`), `tally_projection_lag_seconds` (`max(journal_entries.posted_at) - account_balances.as_of`, zero by construction today; see [`docs/consistency.md`](docs/consistency.md)), `tally_webhook_deliveries{state=delivered|pending|dead}`, `tally_celery_queue_depth`.
+**Metrics.** `GET /internal/metrics` (header `X-Internal-Token`) is Prometheus text. `django-prometheus` records request latency per view. One collector computes the business numbers from the database at scrape time, so they are right in each Django and Celery process without in-process counters: `tally_journal_entries_total` (posting rate via `rate()`), `tally_projection_lag_seconds` (`max(journal_entries.posted_at) - account_balances.as_of`, zero by construction today; see [`docs/consistency.md`](docs/consistency.md)), `tally_webhook_deliveries{state=delivered|pending|dead}`, `tally_celery_queue_depth`.
 
 **Logs.** structlog, JSON on stdout (console renderer under `tally.settings.dev`).
 
@@ -273,7 +273,7 @@ Each choice and the alternative it beat.
 | Account locks taken in id order | Deadlock retry loops | Ordering costs one `sort`; retrying costs a loop in every caller |
 | Ledger as source of truth, Stripe as payment processor | Stripe Billing | Stripe knows about charges. Only the ledger knows a charge settled an invoice that recognized revenue |
 | Outbox for outbound webhooks | Sending from the request | A webhook sent in the request fires for a transaction that rolls back, or is lost when the process dies after commit |
-| `traceparent` stored on the outbox row | Celery header propagation | The delivery is picked up by a sweep, not enqueued from the request; the row is the only thing that crosses |
+| `traceparent` stored on the outbox row | Celery header propagation | A sweep picks the delivery up later; the row is the only thing that crosses from the request |
 | Airflow for one three-task DAG | Beat alone | A schedule, a settlement sensor, retries, a run timeout, backfill and a UI, while the job stays a management command that tests without Airflow |
 | Vue 3, Pinia, Storybook, Cypress | React | React is proven elsewhere; the console is here to prove the Vue stack with the same care |
 | Django session for console operators, acting as their tenant | API key in the browser | Operators never hold a tenant credential; the API stays one surface with CSRF enforced on the session path |
@@ -289,7 +289,7 @@ Enforced in CI (`python.yml`, `console.yml`, `airflow.yml`):
 
 | Level | Where | What |
 |---|---|---|
-| Property (Hypothesis) | domain | every balanced entry posts, every unbalanced one is rejected with the right error; matching assigns every statement line exactly once |
+| Property (Hypothesis) | domain | each balanced entry posts, each unbalanced one fails with the right error; matching assigns each statement line once |
 | Unit | domain, application | money arithmetic, state machine transitions, use cases with fake repositories |
 | Database | adapters | append-only trigger, balancing trigger at commit, projection equals replay |
 | Concurrency | api | 20 threads on two accounts, idempotent replay under concurrent same-key requests |
