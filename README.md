@@ -4,7 +4,7 @@ Billing and ledger platform in Python: a double-entry ledger with a provable bal
 
 A tenant posts financial events through an API. Tally posts each one as a balanced journal entry or rejects it with the reason. Subscriptions invoice on a schedule and collect through Stripe, and the ledger stays the source of truth. You import bank statements, Tally reconciles them against the journal, and an operator resolves the lines that do not match from the console. Each write is idempotent, posting locks accounts in a fixed order, and nobody edits the journal after the fact: a correction is a reversing entry. Docker Compose runs the whole thing with no cloud account and no card on file.
 
-**Status.** Phases 0 to 6 are done: everything below runs from a clean checkout with Docker and uv. Phase 7 (stretch items) is open. The phase list at the end records what landed and when.
+**Status.** Complete. Everything below runs from a clean checkout with Docker and uv. The phase list at the end records what landed.
 
 ## Three-minute demo
 
@@ -317,7 +317,7 @@ Each phase is a branch merged by pull request and tracked as a GitHub issue.
 - [x] 4 Reconciliation and the nightly partner report
 - [x] 5 Vue 3 operations console
 - [x] 6 Observability, demo script, README polish
-- [ ] 7 Stretch, one PR per item: Temporal dunning workflow (done), multi-currency (done), Postgres row-level security (done), Kotlin posting service
+- [x] 7 Stretch, one PR per item: Temporal dunning workflow, multi-currency, Postgres row-level security
 
 ## Out of scope, on purpose
 
