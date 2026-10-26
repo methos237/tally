@@ -1,8 +1,10 @@
 """Accounts, journal entries and the posting rule.
 
 `post()` is the balancing invariant: at least two lines, no zero line, every
-line in its account's currency, and lines summing to zero per currency.
-It raises a typed error naming exactly what is wrong.
+line in its account's currency, and lines summing to zero per currency. An entry
+that declares a Conversion balances in its base currency instead: each other
+currency's total is converted at the declared rate and the converted totals sum to
+zero. It raises a typed error naming exactly what is wrong.
 """
 
 from __future__ import annotations
@@ -10,10 +12,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
-from tally.domain.money import Currency, CurrencyMismatch, Money
+from tally.domain.money import STORED_PLACES, Currency, CurrencyMismatch, Money
 
 MAX_LINE_ABS = Decimal("1e12")  # journal_lines.amount is numeric(18,6): 12 integer digits
 
@@ -42,6 +44,25 @@ class Line:
 
 
 @dataclass(frozen=True, slots=True)
+class Conversion:
+    """The declared rule for a multi-currency entry: `rates[c]` is how many units of `base`
+    one unit of `c` is worth. Converted totals round half up to the stored places, the same
+    rounding Postgres' round() uses, so the domain and the database trigger agree."""
+
+    base: Currency
+    rates: Mapping[Currency, Decimal]
+
+    def to_base(self, total: Money) -> Money:
+        if total.currency is self.base:
+            return total
+        rate = self.rates.get(total.currency)
+        if rate is None:
+            raise MissingRate(total.currency, self.base)
+        converted = (total.amount * rate).quantize(STORED_PLACES, rounding=ROUND_HALF_UP)
+        return Money(converted, self.base)
+
+
+@dataclass(frozen=True, slots=True)
 class JournalEntry:
     tenant_id: int
     occurred_at: datetime
@@ -52,6 +73,7 @@ class JournalEntry:
     posted_at: datetime | None = None
     idempotency_key: str | None = None
     reverses_id: int | None = None
+    conversion: Conversion | None = None
 
 
 class PostingError(ValueError):
@@ -83,6 +105,12 @@ class UnbalancedEntry(PostingError):
         self.difference = difference
 
 
+class MissingRate(PostingError):
+    def __init__(self, currency: Currency, base: Currency) -> None:
+        super().__init__(f"no rate declared from {currency} to {base}")
+        self.currency, self.base = currency, base
+
+
 class UnknownAccount(PostingError):
     def __init__(self, account_id: int) -> None:
         super().__init__(f"account {account_id} does not exist for this tenant")
@@ -111,9 +139,18 @@ def post(entry: JournalEntry, accounts: Mapping[int, Account]) -> JournalEntry:
             raise CurrencyMismatch(account.currency, line.amount.currency)
         cur = line.amount.currency
         totals[cur] = totals.get(cur, Money.zero(cur)) + line.amount
-    for currency, total in totals.items():
+    if entry.conversion is None:
+        for currency, total in totals.items():
+            if not total.is_zero:
+                raise UnbalancedEntry(currency, total)
+        return entry
+    base = entry.conversion.base
+    converted = Money.zero(base)
+    for total in totals.values():
         if not total.is_zero:
-            raise UnbalancedEntry(currency, total)
+            converted += entry.conversion.to_base(total)
+    if not converted.is_zero:
+        raise UnbalancedEntry(base, converted)
     return entry
 
 
@@ -128,4 +165,5 @@ def reversal_of(original: JournalEntry, occurred_at: datetime) -> JournalEntry:
         source_id=str(original.id),
         lines=tuple(Line(line.account_id, -line.amount) for line in original.lines),
         reverses_id=original.id,
+        conversion=original.conversion,
     )

@@ -400,6 +400,84 @@
                 }
             }
         },
+        "/api/rates": {
+            "get": {
+                "operationId": "api_rates_list",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/RateOut"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "post": {
+                "operationId": "api_rates_create",
+                "parameters": [
+                    {
+                        "in": "header",
+                        "name": "Idempotency-Key",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Unique per logical request; replays return the stored response.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RateIn"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RateOut"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
         "/api/reconciliation-exceptions": {
             "get": {
                 "operationId": "api_reconciliation_exceptions_list",
@@ -1127,9 +1205,40 @@
                     "currency"
                 ]
             },
+            "BaseEnum": {
+                "enum": [
+                    "USD",
+                    "EUR",
+                    "GBP",
+                    "JPY"
+                ],
+                "type": "string",
+                "description": "* `USD` - USD\n* `EUR` - EUR\n* `GBP` - GBP\n* `JPY` - JPY"
+            },
             "BlankEnum": {
                 "enum": [
                     ""
+                ]
+            },
+            "ConversionIn": {
+                "type": "object",
+                "description": "Multi-currency entries declare their base currency; rates not given here come from\nthe tenant's exchange_rates table as of the entry's day.",
+                "properties": {
+                    "base": {
+                        "$ref": "#/components/schemas/BaseEnum"
+                    },
+                    "rates": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "format": "decimal",
+                            "pattern": "^-?\\d{0,10}(?:\\.\\d{0,8})?$"
+                        },
+                        "description": "currency -> units of base per unit"
+                    }
+                },
+                "required": [
+                    "base"
                 ]
             },
             "CurrencyEnum": {
@@ -1201,6 +1310,9 @@
                         "items": {
                             "$ref": "#/components/schemas/LineIn"
                         }
+                    },
+                    "conversion": {
+                        "$ref": "#/components/schemas/ConversionIn"
                     }
                 },
                 "required": [
@@ -1245,9 +1357,13 @@
                     "reversed_by": {
                         "type": "integer",
                         "readOnly": true
+                    },
+                    "conversion": {
+                        "nullable": true
                     }
                 },
                 "required": [
+                    "conversion",
                     "id",
                     "lines",
                     "occurred_at",
@@ -1609,6 +1725,63 @@
                     "status",
                     "title",
                     "type"
+                ]
+            },
+            "RateIn": {
+                "type": "object",
+                "properties": {
+                    "currency": {
+                        "$ref": "#/components/schemas/CurrencyEnum"
+                    },
+                    "base": {
+                        "$ref": "#/components/schemas/BaseEnum"
+                    },
+                    "rate": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,10}(?:\\.\\d{0,8})?$"
+                    },
+                    "as_of": {
+                        "type": "string",
+                        "format": "date"
+                    }
+                },
+                "required": [
+                    "as_of",
+                    "base",
+                    "currency",
+                    "rate"
+                ]
+            },
+            "RateOut": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "currency": {
+                        "$ref": "#/components/schemas/CurrencyEnum"
+                    },
+                    "base": {
+                        "$ref": "#/components/schemas/BaseEnum"
+                    },
+                    "rate": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,10}(?:\\.\\d{0,8})?$"
+                    },
+                    "as_of": {
+                        "type": "string",
+                        "format": "date"
+                    }
+                },
+                "required": [
+                    "as_of",
+                    "base",
+                    "currency",
+                    "id",
+                    "rate"
                 ]
             },
             "ReportOut": {

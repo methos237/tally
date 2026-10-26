@@ -55,6 +55,8 @@ class JournalEntry(models.Model):
     source_type = models.CharField(max_length=64)
     source_id = models.CharField(max_length=128)
     idempotency_key = models.CharField(max_length=255, null=True, blank=True)
+    # {"base": "USD", "rates": {"EUR": "1.08"}} for a multi-currency entry; see domain.Conversion
+    conversion = models.JSONField(null=True, blank=True)
     reverses = models.OneToOneField(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="reversed_by"
     )
@@ -81,6 +83,25 @@ class JournalLine(models.Model):
         indexes = [models.Index(fields=["tenant", "account"], name="ix_lines_tenant_account")]
         constraints = [
             models.CheckConstraint(condition=~models.Q(amount=0), name="ck_line_amount_nonzero")
+        ]
+
+
+class ExchangeRate(models.Model):
+    """One unit of `currency` is worth `rate` units of `base` on `as_of`. The posting API
+    fills a Conversion from the latest row at or before the entry's day."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="rates")
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+    base = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+    rate = models.DecimalField(max_digits=18, decimal_places=8)
+    as_of = models.DateField()
+
+    class Meta:
+        db_table = "exchange_rates"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "currency", "base", "as_of"], name="uq_rate_tenant_pair_day"
+            )
         ]
 
 

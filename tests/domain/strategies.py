@@ -4,7 +4,7 @@ from decimal import Decimal
 from hypothesis import assume
 from hypothesis import strategies as st
 
-from tally.domain.journal import Account, AccountType, JournalEntry, Line
+from tally.domain.journal import Account, AccountType, Conversion, JournalEntry, Line
 from tally.domain.money import Currency, Money
 
 TENANT = 1
@@ -60,6 +60,38 @@ def balanced_entry(draw: st.DrawFn, currency: Currency | None = None) -> Journal
     )
     lines = tuple(Line(i, Money(a, cur)) for i, a in zip(ids, amounts_, strict=True))
     return JournalEntry(TENANT, NOW, "test", "1", lines)
+
+
+rates = st.decimals(
+    min_value=Decimal("0.01"), max_value=Decimal("1000"), places=6, allow_nan=False
+).filter(lambda d: d > 0)
+
+
+def mixed_chart(base: Currency, quote: Currency) -> dict[int, Account]:
+    """Accounts 1-3 in the base currency, 4-6 in the quote currency."""
+    return {
+        **{i: Account(i, TENANT, f"{1000 + i}", AccountType.ASSET, base) for i in (1, 2, 3)},
+        **{i: Account(i, TENANT, f"{1000 + i}", AccountType.ASSET, quote) for i in (4, 5, 6)},
+    }
+
+
+@st.composite
+def converted_entry(draw: st.DrawFn) -> tuple[JournalEntry, dict[int, Account]]:
+    """Quote-currency lines plus one base line that offsets their converted total."""
+    base, quote = draw(
+        st.tuples(currencies, currencies).filter(lambda pair: pair[0] is not pair[1])
+    )
+    rate = draw(rates)
+    quote_amounts = draw(st.lists(nonzero_amounts, min_size=1, max_size=4))
+    conversion = Conversion(base, {quote: rate})
+    quote_total = Money(sum(quote_amounts, Decimal(0)), quote)
+    assume(not quote_total.is_zero)
+    offset = -conversion.to_base(quote_total)
+    assume(not offset.is_zero and abs(offset.amount) < Decimal("1e12"))
+    lines = tuple(Line(draw(st.sampled_from([4, 5, 6])), Money(a, quote)) for a in quote_amounts)
+    lines += (Line(draw(st.sampled_from([1, 2, 3])), offset),)
+    entry = JournalEntry(TENANT, NOW, "test", "1", lines, conversion=conversion)
+    return entry, mixed_chart(base, quote)
 
 
 @st.composite
