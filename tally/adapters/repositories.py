@@ -1,12 +1,14 @@
 """Django ORM implementation of the application ports."""
 
 from collections.abc import Iterable, Mapping
+from decimal import Decimal
+from typing import Any
 
 from django.db import IntegrityError, transaction
 
 from tally.adapters import models, outbox, projections
 from tally.application.journal import AlreadyReversed
-from tally.domain.journal import Account, AccountType, JournalEntry, Line
+from tally.domain.journal import Account, AccountType, Conversion, JournalEntry, Line
 from tally.domain.money import Currency, Money
 
 
@@ -17,6 +19,23 @@ def to_domain_account(row: models.Account) -> Account:
         code=row.code,
         type=AccountType(row.type),
         currency=Currency(row.currency),
+    )
+
+
+def conversion_json(conversion: Conversion | None) -> dict[str, Any] | None:
+    if conversion is None:
+        return None
+    return {
+        "base": conversion.base.value,
+        "rates": {c.value: str(r) for c, r in conversion.rates.items()},
+    }
+
+
+def conversion_from_json(data: dict[str, Any] | None) -> Conversion | None:
+    if data is None:
+        return None
+    return Conversion(
+        Currency(data["base"]), {Currency(c): Decimal(r) for c, r in data["rates"].items()}
     )
 
 
@@ -33,6 +52,7 @@ def to_domain_entry(row: models.JournalEntry, lines: Iterable[models.JournalLine
         posted_at=row.posted_at,
         idempotency_key=row.idempotency_key,
         reverses_id=row.reverses_id,
+        conversion=conversion_from_json(row.conversion),
     )
 
 
@@ -77,6 +97,7 @@ class DjangoJournalRepository:
                     source_id=entry.source_id,
                     idempotency_key=entry.idempotency_key,
                     reverses_id=entry.reverses_id,
+                    conversion=conversion_json(entry.conversion),
                 )
                 lines = models.JournalLine.objects.bulk_create(
                     models.JournalLine(

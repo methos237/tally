@@ -31,6 +31,7 @@ urlpatterns = [
     path("api/entries/<int:entry_id>", views.EntryDetail.as_view(), name="entry"),
     path("api/entries/<int:entry_id>/reverse", views.EntryReverse.as_view(), name="entry-reverse"),
     path("api/accounts", views.AccountList.as_view(), name="accounts"),
+    path("api/rates", views.RateList.as_view(), name="rates"),
     path("api/accounts/<str:code>/balance", views.AccountBalanceView.as_view(), name="balance"),
     path("api/subscriptions", views.SubscriptionList.as_view(), name="subscriptions"),
     path("api/invoices", views.InvoiceList.as_view(), name="invoices"),

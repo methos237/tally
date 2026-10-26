@@ -117,6 +117,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["api_rates_list"];
+        put?: never;
+        post: operations["api_rates_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reconciliation-exceptions": {
         parameters: {
             query?: never;
@@ -368,8 +384,27 @@ export interface components {
             /** Format: date-time */
             as_of: string | null;
         };
+        /**
+         * @description * `USD` - USD
+         *     * `EUR` - EUR
+         *     * `GBP` - GBP
+         *     * `JPY` - JPY
+         * @enum {string}
+         */
+        BaseEnum: "USD" | "EUR" | "GBP" | "JPY";
         /** @enum {unknown} */
         BlankEnum: "";
+        /**
+         * @description Multi-currency entries declare their base currency; rates not given here come from
+         *     the tenant's exchange_rates table as of the entry's day.
+         */
+        ConversionIn: {
+            base: components["schemas"]["BaseEnum"];
+            /** @description currency -> units of base per unit */
+            rates?: {
+                [key: string]: string;
+            };
+        };
         /**
          * @description * `USD` - USD
          *     * `EUR` - EUR
@@ -395,6 +430,7 @@ export interface components {
             occurred_at: string;
             source: components["schemas"]["SourceIn"];
             lines: components["schemas"]["LineIn"][];
+            conversion?: components["schemas"]["ConversionIn"];
         };
         EntryOut: {
             readonly id: number;
@@ -408,6 +444,7 @@ export interface components {
             lines: components["schemas"]["LineOut"][];
             readonly reverses: number;
             readonly reversed_by: number;
+            conversion: unknown;
         };
         ExceptionOut: {
             readonly id: number;
@@ -538,6 +575,23 @@ export interface components {
             title: string;
             status: number;
             detail: string;
+        };
+        RateIn: {
+            currency: components["schemas"]["CurrencyEnum"];
+            base: components["schemas"]["BaseEnum"];
+            /** Format: decimal */
+            rate: string;
+            /** Format: date */
+            as_of: string;
+        };
+        RateOut: {
+            readonly id: number;
+            currency: components["schemas"]["CurrencyEnum"];
+            base: components["schemas"]["BaseEnum"];
+            /** Format: decimal */
+            rate: string;
+            /** Format: date */
+            as_of: string;
         };
         ReportOut: {
             /** Format: date */
@@ -875,6 +929,51 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeOut"];
+                };
+            };
+        };
+    };
+    api_rates_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateOut"][];
+                };
+            };
+        };
+    };
+    api_rates_create: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Unique per logical request; replays return the stored response. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RateIn"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateOut"];
                 };
             };
         };

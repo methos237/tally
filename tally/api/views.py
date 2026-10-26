@@ -24,7 +24,7 @@ from tally.api.idempotency import HEADER as IDEMPOTENCY_KEY
 from tally.api.idempotency import idempotent
 from tally.api.problems import Problem
 from tally.application.journal import AlreadyReversed, EntryNotFound, PostEntry, ReverseEntry
-from tally.domain.journal import JournalEntry, Line
+from tally.domain.journal import Conversion, JournalEntry, Line
 from tally.domain.money import Currency, Money
 
 
@@ -121,18 +121,71 @@ class EntryList(generics.ListAPIView[models.JournalEntry]):
                 accounts=missing,
             )
 
+        lines = tuple(
+            Line(accounts[line["account"]], Money(line["amount"], Currency(line["currency"])))
+            for line in data["lines"]
+        )
         entry = JournalEntry(
             tenant_id=tenant_id,
             occurred_at=data["occurred_at"],
             source_type=data["source"]["type"],
             source_id=data["source"]["id"],
             idempotency_key=request.headers[IDEMPOTENCY_KEY],
-            lines=tuple(
-                Line(accounts[line["account"]], Money(line["amount"], Currency(line["currency"])))
-                for line in data["lines"]
+            lines=lines,
+            conversion=conversion_for(
+                tenant_id, data.get("conversion"), lines, data["occurred_at"]
             ),
         )
         return created(tenant_id, PostEntry(DjangoJournalRepository())(entry))
+
+
+def conversion_for(
+    tenant_id: int, declared: dict[str, Any] | None, lines: tuple[Line, ...], at: datetime
+) -> Conversion | None:
+    """Declared rates win; every other currency in the entry gets the tenant's latest stored
+    rate into the base as of the entry's day. Missing rates are the domain's MissingRate."""
+    if declared is None:
+        return None
+    base = Currency(declared["base"])
+    rates = {Currency(c): Decimal(r) for c, r in declared.get("rates", {}).items()}
+    for currency in {line.amount.currency for line in lines} - {base} - set(rates):
+        row = (
+            models.ExchangeRate.objects.filter(
+                tenant_id=tenant_id, currency=currency.value, base=base.value, as_of__lte=at.date()
+            )
+            .order_by("-as_of")
+            .first()
+        )
+        if row is not None:
+            rates[currency] = row.rate
+    return Conversion(base, rates)
+
+
+class RateList(generics.ListAPIView[models.ExchangeRate]):
+    serializer_class = serializers.RateOut
+    pagination_class = None
+
+    def get_queryset(self) -> QuerySet[models.ExchangeRate]:
+        return models.ExchangeRate.objects.filter(tenant_id=tenant_of(self.request).id).order_by(
+            "currency", "base", "-as_of"
+        )
+
+    @extend_schema(request=serializers.RateIn, responses={201: serializers.RateOut})
+    @idempotent
+    def post(self, request: Request) -> Response:
+        body = serializers.RateIn(data=request.data)
+        body.is_valid(raise_exception=True)
+        data = body.validated_data
+        if data["currency"] == data["base"]:
+            raise Problem(422, "a currency needs no rate into itself")
+        row, _ = models.ExchangeRate.objects.update_or_create(
+            tenant_id=tenant_of(request).id,
+            currency=data["currency"],
+            base=data["base"],
+            as_of=data["as_of"],
+            defaults={"rate": data["rate"]},
+        )
+        return Response(serializers.RateOut(row).data, status=status.HTTP_201_CREATED)
 
 
 class EntryDetail(APIView):

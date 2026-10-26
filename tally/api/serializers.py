@@ -63,10 +63,39 @@ class SourceIn(serializers.Serializer[Any]):
     id = serializers.CharField(max_length=128)
 
 
+class RateField(serializers.DecimalField):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(max_digits=18, decimal_places=8, **kwargs)
+
+
+class ConversionIn(serializers.Serializer[Any]):
+    """Multi-currency entries declare their base currency; rates not given here come from
+    the tenant's exchange_rates table as of the entry's day."""
+
+    base = serializers.ChoiceField(choices=CURRENCIES)
+    rates = serializers.DictField(
+        child=RateField(), required=False, help_text="currency -> units of base per unit"
+    )
+
+
 class EntryIn(serializers.Serializer[Any]):
     occurred_at = serializers.DateTimeField()
     source = SourceIn()  # type: ignore[assignment]
     lines = LineIn(many=True, allow_empty=False)
+    conversion = ConversionIn(required=False)
+
+
+class RateIn(serializers.Serializer[Any]):
+    currency = serializers.ChoiceField(choices=CURRENCIES)
+    base = serializers.ChoiceField(choices=CURRENCIES)
+    rate = RateField()
+    as_of = serializers.DateField()
+
+
+class RateOut(serializers.ModelSerializer[models.ExchangeRate]):
+    class Meta:
+        model = models.ExchangeRate
+        fields = ["id", "currency", "base", "rate", "as_of"]
 
 
 class ReverseIn(serializers.Serializer[Any]):
@@ -87,9 +116,20 @@ class EntryOut(serializers.ModelSerializer[models.JournalEntry]):
     reverses = serializers.PrimaryKeyRelatedField[models.JournalEntry](read_only=True)
     reversed_by = serializers.PrimaryKeyRelatedField[models.JournalEntry](read_only=True)
 
+    conversion = serializers.JSONField(allow_null=True)
+
     class Meta:
         model = models.JournalEntry
-        fields = ["id", "occurred_at", "posted_at", "source", "lines", "reverses", "reversed_by"]
+        fields = [
+            "id",
+            "occurred_at",
+            "posted_at",
+            "source",
+            "lines",
+            "reverses",
+            "reversed_by",
+            "conversion",
+        ]
 
     def get_source(self, entry: models.JournalEntry) -> dict[str, str]:
         return {"type": entry.source_type, "id": entry.source_id}
