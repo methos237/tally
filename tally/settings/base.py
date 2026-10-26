@@ -117,6 +117,8 @@ S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://localhost:9000")
 S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "tally")
 S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "tally12345")
 S3_BUCKET = os.environ.get("S3_BUCKET", "reports")
+# Temporal dev server from compose (7233). Empty: payment failures start no dunning workflow.
+TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "")
 # Shared with Airflow (compose: AIRFLOW_VAR_TALLY_INTERNAL_TOKEN). Guards /internal/*.
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "dev-internal-token")
 

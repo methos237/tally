@@ -58,6 +58,17 @@ services:
       /bin/sh -c "aws --endpoint-url http://s3:9000 s3api head-bucket --bucket reports 2>/dev/null
       || aws --endpoint-url http://s3:9000 s3 mb s3://reports"
 
+  # Durable workflows (dunning). gRPC 7233, UI 8233. Dev server: in-memory, no persistence.
+  temporal:
+    image: temporalio/temporal:latest
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--ui-port", "8233"]
+    ports: ["7233:7233", "8233:8233"]
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # Traces. UI on 16687, OTLP/HTTP in on 4318 (OTEL_EXPORTER_OTLP_ENDPOINT).
   jaeger:
     image: jaegertracing/jaeger:2.6.0

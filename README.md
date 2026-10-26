@@ -40,7 +40,7 @@ Tenant systems ──► POST /entries, /subscriptions, /statements   (X-Api-Key
                          subscriptions, invoices, statements, reconciliation_exceptions
                     ▲
    Celery workers ──┤  bill_due_subscriptions (Beat), deliver_webhooks (outbox), expire_idempotency,
-                    │  process_stripe_event
+                    │  process_stripe_event ──► Temporal 7233: DunningWorkflow per unpaid invoice
    Stripe test mode ──► POST /webhooks/stripe (signature verified, deduplicated)
    Airflow ─────────── partner_daily_report ──► S3 bucket reports/ (RustFS) ──► report.ready webhook
 
@@ -63,12 +63,12 @@ OpenTelemetry ──► Jaeger 16687 (one trace: request, outbox write, Celery d
 
 ## Stack
 
-Python 3.13 · Django 6.0 · Django REST Framework 3.18 · Celery 5.6 + Redis 7 · PostgreSQL 17 · Stripe (test mode) · Airflow · RustFS (S3 API) · Hypothesis · pytest · import-linter · Vue 3.5 · Vite 8 · TypeScript 6 · Tailwind CSS 4 · Pinia 4 · Storybook · Cypress · Lighthouse CI · OpenTelemetry + Jaeger · django-prometheus · structlog · GitHub Actions
+Python 3.13 · Django 6.0 · Django REST Framework 3.18 · Celery 5.6 + Redis 7 · Temporal (Python SDK) · PostgreSQL 17 · Stripe (test mode) · Airflow · RustFS (S3 API) · Hypothesis · pytest · import-linter · Vue 3.5 · Vite 8 · TypeScript 6 · Tailwind CSS 4 · Pinia 4 · Storybook · Cypress · Lighthouse CI · OpenTelemetry + Jaeger · django-prometheus · structlog · GitHub Actions
 
 Prerequisites: Docker with Compose v2, uv 0.12+, Node 26, Stripe CLI, a Stripe account in test mode (free, no card). Copy `.env.example` to `.env`; the defaults work against compose without a Stripe key.
 
 ```bash
-docker compose up -d --wait   # Postgres, Redis, stripe-mock, RustFS with the reports bucket
+docker compose up -d --wait   # Postgres, Redis, stripe-mock, RustFS with the reports bucket, Jaeger, Temporal
 make dev                      # migrate, Django on 8001, Celery worker and Beat
 make test                     # pytest against the compose Postgres
 uv run python manage.py seed_demo       # two tenants, 90 days of entries
@@ -177,6 +177,8 @@ The state machine is a transition table in `tally/domain/billing.py`; a Hypothes
 
 **What Stripe does, what the ledger does.** `collect_invoice` creates one Stripe `Customer` per Tally customer and one `PaymentIntent` per invoice, then confirms it server-side with the `4242` test card, off session, redirects disabled, each call under its own idempotency key so a retried task cannot charge twice. `collect_invoice` stores the intent id on the invoice *before* confirming, so the webhook is the only writer of "paid": it resolves the invoice by that id, not by metadata, and a declined card reaches the same invoice as `payment_intent.payment_failed`. A paid invoice posts cash 1000 against receivable 1200 and reactivates a past-due subscription; a failed payment moves the subscription to `past_due`. Invoices do not store their journal entries; the journal's `(source_type, source_id)` links back to the invoice. One module, `tally/adapters/stripe_gateway.py`, builds the `StripeClient` from settings and is the only place that imports the SDK.
 
+**Dunning.** A failed payment moves the subscription to `past_due` and starts one Temporal workflow per unpaid invoice (`tally/adapters/dunning_workflow.py`, task queue `tally-dunning`). The workflow sleeps three days, checks whether the webhook has marked the invoice paid, retries collection, sleeps four more days and checks again, and at day fourteen cancels the subscription through the same state machine. Temporal holds the timers and retries, so a worker restart loses nothing and the Temporal UI (<http://localhost:8233>) shows where each invoice stands. The workflow module imports only the SDK; the activities (`invoice_is_paid`, `retry_collection`, `cancel_subscription`) hold the Django code and run on a thread pool in `manage.py dunning_worker`, which `scripts/serve.sh` starts with the rest. Tests run the workflow against Temporal's time-skipping test server with fake activities, so the fourteen-day schedule proves itself in under a second; `TEMPORAL_ADDRESS` empty means payment failures start no workflow.
+
 **Inbound webhooks.** `POST /webhooks/stripe` verifies `Stripe-Signature` with the SDK (HMAC-SHA256, timestamps older than five minutes rejected), inserts `event.id` into `stripe_events`, returns 200 and hands the row to `process_stripe_event`. A tampered signature gets a 400 and Tally stores nothing; the same event delivered twice gets a 200 and runs once; an intent Tally did not create (a `stripe trigger` fixture, say) gets a 200 and books nothing.
 
 **Outbound webhooks.** Tenants register endpoints with `POST /api/webhook-endpoints` and receive the secret once. The business write puts its events (`entry.posted` for each journal entry, `invoice.issued`, `invoice.paid`, `subscription.past_due`, `subscription.active`, `reconciliation.exception`, `report.ready`) into `webhook_outbox` in its own transaction, so they commit or roll back with it. `deliver_due_webhooks` sweeps every ten seconds and posts the envelope `{"id", "type", "created_at", "data"}` with:
@@ -274,6 +276,7 @@ Each choice and the alternative it beat.
 | Ledger as source of truth, Stripe as payment processor | Stripe Billing | Stripe knows about charges. Only the ledger knows a charge settled an invoice that recognized revenue |
 | Outbox for outbound webhooks | Sending from the request | A webhook sent in the request fires for a transaction that rolls back, or is lost when the process dies after commit |
 | `traceparent` stored on the outbox row | Celery header propagation | A sweep picks the delivery up later; the row is the only thing that crosses from the request |
+| Temporal for the dunning flow | The Beat loop and the state machine alone | Durable timers over days, retries and a visible history per invoice; one flow, so the rest of billing stays a Beat tick |
 | Airflow for one three-task DAG | Beat alone | A schedule, a settlement sensor, retries, a run timeout, backfill and a UI, while the job stays a management command that tests without Airflow |
 | Vue 3, Pinia, Storybook, Cypress | React | React is proven elsewhere; the console is here to prove the Vue stack with the same care |
 | Django session for console operators, acting as their tenant | API key in the browser | Operators never hold a tenant credential; the API stays one surface with CSRF enforced on the session path |
@@ -309,7 +312,7 @@ Each phase is a branch merged by pull request and tracked as a GitHub issue.
 - [x] 4 Reconciliation and the nightly partner report
 - [x] 5 Vue 3 operations console
 - [x] 6 Observability, demo script, README polish
-- [ ] 7 Stretch: Kotlin posting service, Temporal dunning workflow, multi-currency, Postgres row-level security
+- [ ] 7 Stretch, one PR per item: Temporal dunning workflow (done), multi-currency, Postgres row-level security, Kotlin posting service
 
 ## Out of scope, on purpose
 
