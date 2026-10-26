@@ -58,6 +58,11 @@ services:
       /bin/sh -c "aws --endpoint-url http://s3:9000 s3api head-bucket --bucket reports 2>/dev/null
       || aws --endpoint-url http://s3:9000 s3 mb s3://reports"
 
+  # Traces. UI on 16687, OTLP/HTTP in on 4318 (OTEL_EXPORTER_OTLP_ENDPOINT).
+  jaeger:
+    image: jaegertracing/jaeger:2.6.0
+    ports: ["16687:16686", "4318:4318"]
+
   # Nightly report orchestrator. `docker compose --profile batch up -d`; UI on 8081, no login.
   # Metadata DB is a second database on the same Postgres; Tally itself runs on the host
   # (make dev), reached as host.docker.internal:8001.

@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping
 
 from django.db import IntegrityError, transaction
 
-from tally.adapters import models, projections
+from tally.adapters import models, outbox, projections
 from tally.application.journal import AlreadyReversed
 from tally.domain.journal import Account, AccountType, JournalEntry, Line
 from tally.domain.money import Currency, Money
@@ -48,6 +48,19 @@ def lock_accounts(account_ids: Iterable[int]) -> None:
     list(models.Account.objects.select_for_update().filter(id__in=ids).order_by("id"))
 
 
+def entry_event(row: models.JournalEntry, lines: list[models.JournalLine]) -> dict[str, object]:
+    return {
+        "entry_id": row.id,
+        "occurred_at": row.occurred_at,
+        "source": {"type": row.source_type, "id": row.source_id},
+        "reverses": row.reverses_id,
+        "lines": [
+            {"account_id": line.account_id, "amount": line.amount, "currency": line.currency}
+            for line in lines
+        ],
+    }
+
+
 class DjangoJournalRepository:
     def accounts_for(self, tenant_id: int, account_ids: Iterable[int]) -> Mapping[int, Account]:
         rows = models.Account.objects.filter(tenant_id=tenant_id, id__in=list(account_ids))
@@ -76,6 +89,7 @@ class DjangoJournalRepository:
                     for line in entry.lines
                 )
                 projections.apply(row)
+                outbox.publish(entry.tenant_id, "entry.posted", entry_event(row, lines))
         except IntegrityError as exc:
             if entry.reverses_id is not None and "reverses_id" in str(exc):
                 raise AlreadyReversed(entry.reverses_id) from exc

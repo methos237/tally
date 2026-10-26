@@ -16,8 +16,10 @@ from urllib import error, request
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
+from opentelemetry.propagate import extract, inject
 
 from tally.adapters.models import OutboxMessage, WebhookEndpoint
+from tally.telemetry import tracer
 
 SIGNATURE_HEADER = "X-Tally-Signature"
 BACKOFF = [timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=30), timedelta(hours=2)]
@@ -29,16 +31,20 @@ def publish(tenant_id: int, event_type: str, data: dict[str, Any]) -> None:
     transaction that produces the event so the two commit or roll back together."""
     endpoints = WebhookEndpoint.objects.filter(tenant_id=tenant_id, disabled_at__isnull=True)
     now = timezone.now()
-    OutboxMessage.objects.bulk_create(
-        OutboxMessage(
-            tenant_id=tenant_id,
-            endpoint=endpoint,
-            event_type=event_type,
-            payload=data,
-            next_attempt_at=now,
+    carrier: dict[str, str] = {}
+    with tracer.start_as_current_span("outbox.publish", attributes={"event.type": event_type}):
+        inject(carrier)
+        OutboxMessage.objects.bulk_create(
+            OutboxMessage(
+                tenant_id=tenant_id,
+                endpoint=endpoint,
+                event_type=event_type,
+                payload=data,
+                next_attempt_at=now,
+                traceparent=carrier.get("traceparent", ""),
+            )
+            for endpoint in endpoints
         )
-        for endpoint in endpoints
-    )
 
 
 def sign(secret: str, body: bytes, at: int) -> str:
@@ -59,7 +65,18 @@ def body_of(message: OutboxMessage) -> bytes:
 
 
 def attempt(message: OutboxMessage) -> bool:
-    """One HTTP POST. Updates attempts, schedule, dead-letter state. Returns success."""
+    """One HTTP POST. Updates attempts, schedule, dead-letter state. Returns success.
+    The span continues the trace of the request that published the event."""
+    parent = extract({"traceparent": message.traceparent}) if message.traceparent else None
+    with tracer.start_as_current_span(
+        "webhook.deliver",
+        context=parent,
+        attributes={"event.type": message.event_type, "outbox.id": message.id},
+    ):
+        return _attempt(message)
+
+
+def _attempt(message: OutboxMessage) -> bool:
     body = body_of(message)
     req = request.Request(
         message.endpoint.url,
