@@ -11,6 +11,7 @@ API=http://localhost:8001
 cp -n .env.example .env 2>/dev/null || true   # compose defaults: stripe-mock, RustFS, Jaeger
 set -a; . ./.env; set +a
 export STRIPE_WEBHOOK_SECRET="${STRIPE_WEBHOOK_SECRET:-whsec_demo}" INTERNAL_TOKEN="${INTERNAL_TOKEN:-dev-internal-token}"
+export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}"  # an older .env may lack it
 
 step "compose up (Postgres, Redis, stripe-mock, RustFS, Jaeger, Airflow)"
 # --wait fails on the one-shot bucket job exiting 0, so run it on its own afterwards.
@@ -23,10 +24,8 @@ uv run python manage.py migrate -v0
 uv run python manage.py seed_demo
 
 step "start Django, Celery worker and Beat"
-uv run python manage.py runserver --noreload 8001 >/tmp/tally-demo-django.log 2>&1 &
-uv run celery -A tally worker -l warning --pool solo >/tmp/tally-demo-worker.log 2>&1 &
-uv run celery -A tally beat -l warning >/tmp/tally-demo-beat.log 2>&1 &
-trap 'kill $(jobs -p) 2>/dev/null' EXIT
+NORELOAD=1 LOG_LEVEL=warning scripts/serve.sh >/tmp/tally-demo-serve.log 2>&1 &
+trap 'kill %1 2>/dev/null' EXIT   # serve.sh stops its three processes on TERM
 curl -sf --retry 30 --retry-connrefused --retry-delay 1 "$API/health" >/dev/null
 KEY=$(uv run python manage.py issue_api_key --tenant "Acme Corp" --name demo | tail -1)
 auth=(-H "X-Api-Key: $KEY" -H "Content-Type: application/json")
