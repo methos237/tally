@@ -154,7 +154,7 @@ Amounts travel as strings with six decimal places; the serializer rejects JSON n
 | Locking | Posting locks the touched accounts with `SELECT ... FOR UPDATE` ordered by account id, so two entries naming the same accounts in opposite order cannot deadlock. 20 threads post 200 entries at two accounts in alternating order and the final balances are exact |
 | Consistency | Entries are read-your-writes; replays are byte-identical; the posting transaction updates the balance projection, and `/internal/metrics` reports its lag. [`docs/consistency.md`](docs/consistency.md) spells out which reads see what |
 | Rate limiting | Token bucket per API key in Redis, one atomic Lua script, default 100 requests per minute with a per-tenant override. Every authenticated response carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`; exhaustion is a 429 problem with `Retry-After` |
-| Tenancy | Keys resolve to a tenant; each query filters by it. Another tenant's entry or account is a 404, not a 403 |
+| Tenancy | Keys resolve to a tenant; each query filters by it. Another tenant's entry or account is a 404, not a 403. Beneath the repositories, Postgres row-level security is a second wall: authentication binds the connection to the tenant (`SET ROLE tally_app` plus a session setting) and policies on every tenant table hide and refuse other tenants' rows until the middleware unbinds at the end of the request; unbound connections (Celery, management commands, `/internal`) see every tenant |
 | Authentication | `X-Api-Key` checked against an Argon2 hash; only an 8-character prefix is stored in the clear for lookup. Missing, unknown or revoked keys are 401 with `WWW-Authenticate: X-Api-Key` |
 | Errors | RFC 9457 problem details everywhere (`application/problem+json`), one handler. Domain rejections are `type: .../posting/UnbalancedEntry` and friends; an unbalanced entry names the currency and the difference |
 
@@ -281,6 +281,7 @@ Each choice and the alternative it beat.
 | `traceparent` stored on the outbox row | Celery header propagation | A sweep picks the delivery up later; the row is the only thing that crosses from the request |
 | Temporal for the dunning flow | The Beat loop and the state machine alone | Durable timers over days, retries and a visible history per invoice; one flow, so the rest of billing stays a Beat tick |
 | Conversion declared on the entry, rates table as the default | Converting lines to a single book currency on the way in | The ledger keeps what happened in each currency; the rate used is on the entry and the FX difference is a visible line, so revaluation is a posting, not a recalculation |
+| Row-level security as a second tenancy wall | Repository filters alone | A forgotten `filter(tenant_id=...)` in a new query returns nothing instead of another tenant's rows; the policy is one rule in one place |
 | Airflow for one three-task DAG | Beat alone | A schedule, a settlement sensor, retries, a run timeout, backfill and a UI, while the job stays a management command that tests without Airflow |
 | Vue 3, Pinia, Storybook, Cypress | React | React is proven elsewhere; the console is here to prove the Vue stack with the same care |
 | Django session for console operators, acting as their tenant | API key in the browser | Operators never hold a tenant credential; the API stays one surface with CSRF enforced on the session path |
@@ -316,7 +317,7 @@ Each phase is a branch merged by pull request and tracked as a GitHub issue.
 - [x] 4 Reconciliation and the nightly partner report
 - [x] 5 Vue 3 operations console
 - [x] 6 Observability, demo script, README polish
-- [ ] 7 Stretch, one PR per item: Temporal dunning workflow (done), multi-currency (done), Postgres row-level security, Kotlin posting service
+- [ ] 7 Stretch, one PR per item: Temporal dunning workflow (done), multi-currency (done), Postgres row-level security (done), Kotlin posting service
 
 ## Out of scope, on purpose
 
