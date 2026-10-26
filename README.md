@@ -100,6 +100,8 @@ An `Account` has a type (asset, liability, equity, revenue, expense), a code, a 
 
 **Money.** `Money(amount: Decimal, currency)` quantizes to six decimal places with `ROUND_HALF_EVEN` on construction, the one place rounding happens; display rounds to the currency's exponent (2 for USD, EUR, GBP; 0 for JPY). It refuses floats with `TypeError` and non-finite values with `ValueError`. Lines must fit `numeric(18,6)`, so `post()` rejects any line at or beyond 10^12 with `AmountOutOfRange` rather than letting the database truncate it. Mixed-currency arithmetic raises `CurrencyMismatch`.
 
+**Multi-currency.** Each account has one currency and each line is in its account's currency; a plain entry balances per currency. An entry that touches two currencies declares a `conversion`: the base currency and, per other currency, how many units of base one unit is worth. The posting rule converts each currency's total at its rate, rounds half up to six places, and requires the converted totals to sum to zero; the caller books the rounding or revaluation difference as its own line (an FX gains and losses account). `POST /api/rates` keeps a per-tenant `exchange_rates` table (`currency`, `base`, `rate`, `as_of`), and an entry that names only its base gets the latest stored rate at or before its day; a currency without a rate is a 422 `MissingRate`. The database trigger applies the same rule with `round()`, so a raw insert cannot slip an unconverted entry past commit, and a reversal carries the original conversion so it balances the same way.
+
 **Layers.** `tally/domain` imports nothing from Django; `import-linter` fails CI if it does. `tally/application` holds `PostEntry` and `ReverseEntry` over a `JournalRepository` Protocol and is tested against an in-memory fake. `tally/adapters` implements the port with the Django ORM, owns the migrations and triggers, and ships `seed_demo`: two tenants, a 12-account chart each, and 400 deterministic entries over 90 days.
 
 ## Posting API
@@ -140,6 +142,7 @@ curl -s localhost:8001/api/accounts/1200/balance -H "X-Api-Key: $KEY" | jq
 | `POST /api/entries/{id}/reverse` | Posts the negated entry linked to the original; a second reversal is 409 |
 | `GET /api/accounts` | The tenant's chart of accounts |
 | `GET /api/accounts/{code}/balance?as_of=` | Projection balance, or an exact fold over the journal up to `as_of` |
+| `GET`, `POST /api/rates` | The tenant's exchange rates (`currency`, `base`, `rate`, `as_of`); the posting rule's default conversion source |
 | `GET /api/me` | Confirms a key and names the tenant |
 | `GET /openapi.json`, `GET /docs` | OpenAPI 3 document and Redoc, no key required |
 
@@ -277,6 +280,7 @@ Each choice and the alternative it beat.
 | Outbox for outbound webhooks | Sending from the request | A webhook sent in the request fires for a transaction that rolls back, or is lost when the process dies after commit |
 | `traceparent` stored on the outbox row | Celery header propagation | A sweep picks the delivery up later; the row is the only thing that crosses from the request |
 | Temporal for the dunning flow | The Beat loop and the state machine alone | Durable timers over days, retries and a visible history per invoice; one flow, so the rest of billing stays a Beat tick |
+| Conversion declared on the entry, rates table as the default | Converting lines to a single book currency on the way in | The ledger keeps what happened in each currency; the rate used is on the entry and the FX difference is a visible line, so revaluation is a posting, not a recalculation |
 | Airflow for one three-task DAG | Beat alone | A schedule, a settlement sensor, retries, a run timeout, backfill and a UI, while the job stays a management command that tests without Airflow |
 | Vue 3, Pinia, Storybook, Cypress | React | React is proven elsewhere; the console is here to prove the Vue stack with the same care |
 | Django session for console operators, acting as their tenant | API key in the browser | Operators never hold a tenant credential; the API stays one surface with CSRF enforced on the session path |
@@ -312,11 +316,11 @@ Each phase is a branch merged by pull request and tracked as a GitHub issue.
 - [x] 4 Reconciliation and the nightly partner report
 - [x] 5 Vue 3 operations console
 - [x] 6 Observability, demo script, README polish
-- [ ] 7 Stretch, one PR per item: Temporal dunning workflow (done), multi-currency, Postgres row-level security, Kotlin posting service
+- [ ] 7 Stretch, one PR per item: Temporal dunning workflow (done), multi-currency (done), Postgres row-level security, Kotlin posting service
 
 ## Out of scope, on purpose
 
-Real money movement (test mode only), currency conversion, tax, dunning emails, a public deployment, multi-tenant SaaS concerns such as self-serve signup and billing of the tenants themselves. Each would be a layer on top; none changes the ledger design shown here.
+Real money movement (test mode only), automatic rate feeds and revaluation runs, tax, dunning emails, a public deployment, multi-tenant SaaS concerns such as self-serve signup and billing of the tenants themselves. Each would be a layer on top; none changes the ledger design shown here.
 
 ## License
 
