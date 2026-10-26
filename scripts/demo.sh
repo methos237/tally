@@ -15,7 +15,7 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localh
 
 step "compose up (Postgres, Redis, stripe-mock, RustFS, Jaeger, Airflow)"
 # --wait fails on the one-shot bucket job exiting 0, so run it on its own afterwards.
-docker compose --profile batch up -d --wait postgres redis stripe-mock s3 jaeger airflow
+docker compose --profile batch up -d --wait postgres redis stripe-mock s3 jaeger temporal airflow
 docker compose up s3-init 2>&1 | tail -1
 
 step "migrate and seed"

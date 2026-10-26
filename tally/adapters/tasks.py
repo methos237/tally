@@ -6,7 +6,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from tally.adapters import billing, outbox, stripe_gateway
+from tally.adapters import billing, dunning, outbox, stripe_gateway
 from tally.adapters.models import (
     IdempotencyRecord,
     Invoice,
@@ -82,7 +82,8 @@ def process_stripe_event(row_id: int) -> str:
         outcome = f"invoice {invoice.id} paid"
     elif row.type == "payment_intent.payment_failed":
         billing.mark_failed(invoice.id)
-        outcome = f"invoice {invoice.id} payment failed"
+        started = dunning.start(invoice.id)  # retries and cancellation live in Temporal
+        outcome = f"invoice {invoice.id} payment failed" + (", dunning started" if started else "")
     else:
         outcome = f"ignored {row.type}"
     row.processed_at = timezone.now()
